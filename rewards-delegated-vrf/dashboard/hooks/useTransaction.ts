@@ -27,7 +27,7 @@ import {
   createCreateMasterEditionV3Instruction,
   createCreateMetadataAccountV3Instruction,
   createSetAndVerifySizedCollectionItemInstruction,
-} from "../../node_modules/@metaplex-foundation/mpl-token-metadata";
+} from "@metaplex-foundation/mpl-token-metadata";
 
 type AdminActionEndpointMode = "solana" | "magicblock";
 

@@ -11,7 +11,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@magicblock-labs/ephemeral-rollups-sdk": "^0.10.3",
-    "@metaplex-foundation/mpl-token-metadata": "^3.2.0",
+    "@metaplex-foundation/mpl-token-metadata": "^2.13.0",
     "@solana/spl-token": "^0.4.5",
     "@solana/wallet-adapter-react": "^0.15.35",
     "@solana/wallet-adapter-react-ui": "^0.9.35",
