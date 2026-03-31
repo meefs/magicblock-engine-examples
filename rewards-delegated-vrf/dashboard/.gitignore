@@ -6,4 +6,3 @@
 /.env.local
 /.env
 node_modules/
-yarn.lock
