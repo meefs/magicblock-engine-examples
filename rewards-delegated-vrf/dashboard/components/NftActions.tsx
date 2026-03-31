@@ -8,7 +8,7 @@ import {
   TOKEN_PROGRAM_ID,
   unpackAccount,
 } from "@solana/spl-token";
-import { getMetadataAccountDataSerializer } from "@metaplex-foundation/mpl-token-metadata";
+import { Metadata } from "@metaplex-foundation/mpl-token-metadata";
 import { Zap, Grid } from "lucide-react";
 import { useTransaction } from "@/hooks/useTransaction";
 import { useGlobalTransactionHistory } from "@/hooks/useGlobalTransactionHistory";
@@ -83,7 +83,6 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
             ? connection
             : new Connection(readEndpoint, "confirmed");
         const metadataProgramId = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
-        const serializer = getMetadataAccountDataSerializer();
         const programResponses = await Promise.all([
           readConnection.getTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID }),
           readConnection.getTokenAccountsByOwner(publicKey, { programId: TOKEN_2022_PROGRAM_ID }),
@@ -137,14 +136,14 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
           }
 
           try {
-            const [metadata] = serializer.deserialize(metadataAccount.data);
+            const [metadata] = Metadata.deserialize(metadataAccount.data);
             if (!metadata.collectionDetails) {
               return;
             }
 
             const metadataName =
-              typeof metadata.name === "string"
-                ? metadata.name.replace(/\0/g, "").trim()
+              typeof metadata.data.name === "string"
+                ? metadata.data.name.replace(/\0/g, "").trim()
                 : mint.toBase58().slice(0, 8);
 
             collectionOptions.push({
