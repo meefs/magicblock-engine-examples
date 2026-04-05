@@ -327,7 +327,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
       }
       },
-      [publicKey, signTransaction, connection]
+      [publicKey, signTransaction, connection, getActionEndpoint]
       );
 
   const setAdmins = useCallback(
@@ -363,7 +363,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
         }
         },
-        [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
         );
 
         const setWhitelist = useCallback(
@@ -399,7 +399,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
         }
         },
-        [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
         );
 
         const setRewardList = useCallback(
@@ -456,7 +456,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
         }
         },
-        [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
         );
 
         const delegateRewardList = useCallback(async (validator?: PublicKey): Promise<TransactionResponse> => {
@@ -500,7 +500,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
       setStatus({ loading: false, error: errorMessage, signature: null });
       return { success: false, error: errorMessage };
       }
-      }, [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]);
+      }, [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]);
 
       const undelegateRewardList = useCallback(
     async (): Promise<TransactionResponse> => {
@@ -537,7 +537,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
         }
         },
-        [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
         );
 
   const requestRandomReward = useCallback(
@@ -663,7 +663,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
          return { success: false, error: errorMessage };
        }
     },
-    [publicKey, signTransaction, connection, props]
+    [publicKey, signTransaction, connection, getActionEndpoint, props]
   );
 
   const addReward = useCallback(
@@ -721,7 +721,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
         }
         },
-        [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
         );
 
   const removeReward = useCallback(
@@ -765,7 +765,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
       }
     },
-    [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
   );
 
   const updateReward = useCallback(
@@ -823,7 +823,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         return { success: false, error: errorMessage };
       }
     },
-    [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
+    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
   );
 
   const mintNftCollection = useCallback(
