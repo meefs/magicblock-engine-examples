@@ -94,8 +94,8 @@ pub fn remove_reward(
     validate_reward(&ctx.accounts.reward_list)?;
 
     let amount = match reward_type {
-        RewardType::LegacyNft | RewardType::ProgrammableNft => 1,
-        _ => reward_amount,
+        RewardType::LegacyNft | RewardType::ProgrammableNft => redemption_amount.unwrap_or(1),
+        _ => reward_amount * redemption_amount.unwrap_or(1),
     };
 
     execute_reward_transfer(
