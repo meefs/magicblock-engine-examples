@@ -36,6 +36,8 @@ const SOLANA_MAINNET_ENDPOINT = "https://rpc.magicblock.app/mainnet";
 const MAGICBLOCK_DEVNET_ENDPOINT =
   process.env.NEXT_PUBLIC_EPHEMERAL_PROVIDER_ENDPOINT || "https://devnet-as.magicblock.app/";
 const MAGICBLOCK_MAINNET_ENDPOINT = "https://as.magicblock.app";
+const MAGICBLOCK_DEVNET_US_ENDPOINT = "https://devnet-us.magicblock.app";
+const MAGICBLOCK_MAINNET_US_ENDPOINT = "https://us.magicblock.app";
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 );
@@ -45,7 +47,7 @@ function isKnownDevnetEndpoint(endpoint: string): boolean {
 }
 
 function isKnownMainnetEndpoint(endpoint: string): boolean {
-  return endpoint.includes("mainnet") || endpoint.includes("as.magicblock.app");
+  return endpoint.includes("mainnet") || endpoint.includes("as.magicblock.app") || endpoint === MAGICBLOCK_MAINNET_US_ENDPOINT;
 }
 
 function isKnownPresetEndpoint(endpoint: string): boolean {
@@ -53,8 +55,23 @@ function isKnownPresetEndpoint(endpoint: string): boolean {
     endpoint === SOLANA_DEVNET_ENDPOINT ||
     endpoint === SOLANA_MAINNET_ENDPOINT ||
     endpoint === MAGICBLOCK_DEVNET_ENDPOINT ||
-    endpoint === MAGICBLOCK_MAINNET_ENDPOINT
+    endpoint === MAGICBLOCK_MAINNET_ENDPOINT ||
+    endpoint === MAGICBLOCK_DEVNET_US_ENDPOINT ||
+    endpoint === MAGICBLOCK_MAINNET_US_ENDPOINT
   );
+}
+
+function isMagicBlockEndpoint(endpoint: string): boolean {
+  return (
+    endpoint === MAGICBLOCK_DEVNET_ENDPOINT ||
+    endpoint === MAGICBLOCK_MAINNET_ENDPOINT ||
+    endpoint === MAGICBLOCK_DEVNET_US_ENDPOINT ||
+    endpoint === MAGICBLOCK_MAINNET_US_ENDPOINT
+  );
+}
+
+function isSolanaEndpoint(endpoint: string): boolean {
+  return endpoint === SOLANA_DEVNET_ENDPOINT || endpoint === SOLANA_MAINNET_ENDPOINT;
 }
 
 function resolveAdminActionEndpoint(
@@ -65,12 +82,32 @@ function resolveAdminActionEndpoint(
     return selectedEndpoint;
   }
 
-  if (isKnownDevnetEndpoint(selectedEndpoint)) {
-    return mode === "solana" ? SOLANA_DEVNET_ENDPOINT : MAGICBLOCK_DEVNET_ENDPOINT;
+  if (mode === "magicblock") {
+    // If already on a MagicBlock endpoint, use it directly
+    if (isMagicBlockEndpoint(selectedEndpoint)) {
+      return selectedEndpoint;
+    }
+    // On a Solana endpoint — pick the default MagicBlock peer for that network
+    if (isKnownDevnetEndpoint(selectedEndpoint)) {
+      return MAGICBLOCK_DEVNET_ENDPOINT;
+    }
+    if (isKnownMainnetEndpoint(selectedEndpoint)) {
+      return MAGICBLOCK_MAINNET_ENDPOINT;
+    }
   }
 
-  if (isKnownMainnetEndpoint(selectedEndpoint)) {
-    return mode === "solana" ? SOLANA_MAINNET_ENDPOINT : MAGICBLOCK_MAINNET_ENDPOINT;
+  if (mode === "solana") {
+    // If already on a Solana endpoint, use it directly
+    if (isSolanaEndpoint(selectedEndpoint)) {
+      return selectedEndpoint;
+    }
+    // On a MagicBlock endpoint — resolve to the Solana base layer
+    if (isKnownDevnetEndpoint(selectedEndpoint)) {
+      return SOLANA_DEVNET_ENDPOINT;
+    }
+    if (isKnownMainnetEndpoint(selectedEndpoint)) {
+      return SOLANA_MAINNET_ENDPOINT;
+    }
   }
 
   return selectedEndpoint;
@@ -422,7 +459,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
         [publicKey, signTransaction, connection, props?.selectedDistributor?.toString()]
         );
 
-        const delegateRewardList = useCallback(async (): Promise<TransactionResponse> => {
+        const delegateRewardList = useCallback(async (validator?: PublicKey): Promise<TransactionResponse> => {
     if (!publicKey) return { success: false, error: "Wallet not connected" };
 
     setStatus({ loading: true, error: null, signature: null });
@@ -434,21 +471,28 @@ export const useTransaction = (props?: UseTransactionProps) => {
       const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
       const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
 
-      const tx = await program.methods
+      let txBuilder = program.methods
         .delegateRewardList()
         .accounts({
           admin: publicKey,
           rewardDistributor: rewardDistributorPda,
           rewardList: rewardListPda,
           systemProgram: anchor.web3.SystemProgram.programId,
-        } as any)
-        .transaction();
+        } as any);
+
+      if (validator) {
+        txBuilder = txBuilder.remainingAccounts([
+          { pubkey: validator, isSigner: false, isWritable: false },
+        ]);
+      }
+
+      const tx = await txBuilder.transaction();
 
       const result = await sendTransaction(tx, actionEndpoint);
-      setStatus({ 
-        loading: false, 
-        error: result.error || null, 
-        signature: result.signature || null 
+      setStatus({
+        loading: false,
+        error: result.error || null,
+        signature: result.signature || null
       });
       return result;
     } catch (err) {

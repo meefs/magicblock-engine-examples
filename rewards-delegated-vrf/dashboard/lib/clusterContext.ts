@@ -38,6 +38,16 @@ export const CLUSTER_CONFIG: Record<string, ClusterInfo> = {
     endpoint: "https://as.magicblock.app",
     wsEndpoint: "wss://as.magicblock.app",
   },
+  "https://devnet-us.magicblock.app": {
+    name: "MagicBlock Devnet US",
+    endpoint: "https://devnet-us.magicblock.app",
+    wsEndpoint: "wss://devnet-us.magicblock.app",
+  },
+  "https://us.magicblock.app": {
+    name: "MagicBlock Mainnet US",
+    endpoint: "https://us.magicblock.app",
+    wsEndpoint: "wss://us.magicblock.app",
+  },
   "http://localhost:8899": {
     name: "Localhost",
     endpoint: "http://localhost:8899",
@@ -152,14 +162,16 @@ export function getBaseLayerSolanaEndpoint(endpoint: string): string {
 
   if (
     normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://rpc.magicblock.app/devnet"].endpoint) ||
-    normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://devnet-as.magicblock.app/"].endpoint)
+    normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://devnet-as.magicblock.app/"].endpoint) ||
+    normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://devnet-us.magicblock.app"].endpoint)
   ) {
     return CLUSTER_CONFIG["https://rpc.magicblock.app/devnet"].endpoint;
   }
 
   if (
     normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://rpc.magicblock.app/mainnet"].endpoint) ||
-    normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://as.magicblock.app"].endpoint)
+    normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://as.magicblock.app"].endpoint) ||
+    normalizedEndpoint === normalizeEndpoint(CLUSTER_CONFIG["https://us.magicblock.app"].endpoint)
   ) {
     return CLUSTER_CONFIG["https://rpc.magicblock.app/mainnet"].endpoint;
   }

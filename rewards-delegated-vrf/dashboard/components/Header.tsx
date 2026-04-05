@@ -47,6 +47,20 @@ const DEFAULT_CONNECTIONS: ConnectionOption[] = [
     color: "bg-orange-600",
   },
   {
+    name: "MagicBlock Devnet US",
+    endpoint: "https://devnet-us.magicblock.app",
+    wsEndpoint: "wss://devnet-us.magicblock.app",
+    description: "Ephemeral rollup US region (devnet)",
+    color: "bg-blue-600",
+  },
+  {
+    name: "MagicBlock Mainnet US",
+    endpoint: "https://us.magicblock.app",
+    wsEndpoint: "wss://us.magicblock.app",
+    description: "MagicBlock mainnet US region",
+    color: "bg-orange-600",
+  },
+  {
     name: "Localhost",
     endpoint: "http://localhost:8899",
     wsEndpoint: "ws://localhost:8900",

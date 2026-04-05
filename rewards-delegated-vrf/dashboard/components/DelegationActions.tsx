@@ -3,12 +3,41 @@
 import React, { useState } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { Send, Unlock } from "lucide-react";
+import { Send, Unlock, ChevronDown } from "lucide-react";
 import { useTransaction } from "@/hooks/useTransaction";
 import { useGlobalTransactionHistory } from "@/hooks/useGlobalTransactionHistory";
 import { getDefaultSolanaEndpoint } from "@/lib/clusterContext";
 import { requestDashboardDataRefresh } from "@/lib/refresh";
 import { TransactionModal } from "./TransactionModal";
+
+interface MagicBlockValidator {
+  name: string;
+  validator: PublicKey;
+  network: "devnet" | "mainnet";
+}
+
+const MAGICBLOCK_VALIDATORS: MagicBlockValidator[] = [
+  {
+    name: "MagicBlock Devnet Asia",
+    validator: new PublicKey("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"),
+    network: "devnet",
+  },
+  {
+    name: "MagicBlock Devnet US",
+    validator: new PublicKey("MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd"),
+    network: "devnet",
+  },
+  {
+    name: "MagicBlock Mainnet Asia",
+    validator: new PublicKey("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"),
+    network: "mainnet",
+  },
+  {
+    name: "MagicBlock Mainnet US",
+    validator: new PublicKey("MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd"),
+    network: "mainnet",
+  },
+];
 
 interface DelegationActionsProps {
   selectedDistributor?: PublicKey | null;
@@ -27,6 +56,8 @@ export const DelegationActions: React.FC<DelegationActionsProps> = ({
   });
 
   const [activeModal, setActiveModal] = useState<string | null>(null);
+  const [selectedValidator, setSelectedValidator] = useState<MagicBlockValidator>(MAGICBLOCK_VALIDATORS[0]);
+  const [validatorDropdownOpen, setValidatorDropdownOpen] = useState(false);
   const [localStatus, setLocalStatus] = useState({
     loading: false,
     error: null as string | null,
@@ -37,6 +68,7 @@ export const DelegationActions: React.FC<DelegationActionsProps> = ({
   const closeModal = () => {
     setLocalStatus({ loading: false, error: null, signature: null, endpoint: null });
     setActiveModal(null);
+    setValidatorDropdownOpen(false);
   };
 
   const handleTransactionResult = (result: any, actionName: string) => {
@@ -81,7 +113,7 @@ export const DelegationActions: React.FC<DelegationActionsProps> = ({
 
   const handleDelegate = async () => {
     setLocalStatus({ loading: true, error: null, signature: null, endpoint: null });
-    const result = await delegateRewardList();
+    const result = await delegateRewardList(selectedValidator.validator);
     handleTransactionResult(result, "Delegate Reward List");
   };
 
@@ -137,7 +169,66 @@ export const DelegationActions: React.FC<DelegationActionsProps> = ({
         endpoint={localStatus.endpoint || connection.rpcEndpoint}
         onClose={closeModal}
         onConfirm={handleDelegate}
-      />
+      >
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-300">
+            MagicBlock Validator
+          </label>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setValidatorDropdownOpen(!validatorDropdownOpen)}
+              className="w-full flex items-center justify-between px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm hover:bg-gray-600 transition"
+            >
+              <div className="text-left">
+                <div className="font-medium">{selectedValidator.name}</div>
+                <div className="text-xs text-gray-400 font-mono">
+                  {selectedValidator.validator.toBase58().slice(0, 8)}...
+                  <span className="ml-2 text-gray-500">
+                    ({selectedValidator.network})
+                  </span>
+                </div>
+              </div>
+              <ChevronDown
+                className={`w-4 h-4 text-gray-400 transition-transform ${
+                  validatorDropdownOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+            {validatorDropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded shadow-lg z-50 overflow-hidden">
+                {MAGICBLOCK_VALIDATORS.map((v) => (
+                  <button
+                    key={`${v.name}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedValidator(v);
+                      setValidatorDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-600 transition ${
+                      selectedValidator.name === v.name
+                        ? "bg-blue-600/20 text-white"
+                        : "text-gray-300"
+                    }`}
+                  >
+                    <div className="font-medium">{v.name}</div>
+                    <div className="text-xs text-gray-400 font-mono">
+                      {v.validator.toBase58().slice(0, 8)}...
+                      <span className="ml-2 text-gray-500">
+                        → Solana {v.network === "devnet" ? "Devnet" : "Mainnet"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-gray-500">
+            Transaction will be submitted to Solana{" "}
+            {selectedValidator.network === "devnet" ? "Devnet" : "Mainnet"}
+          </p>
+        </div>
+      </TransactionModal>
 
       <TransactionModal
         isOpen={activeModal === "undelegate"}
