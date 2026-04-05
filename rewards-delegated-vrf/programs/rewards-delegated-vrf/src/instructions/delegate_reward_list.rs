@@ -5,7 +5,10 @@ use crate::constants::REWARD_LIST_SEED;
 use crate::DelegateRewardList;
 
 pub fn delegate_reward_list(ctx: Context<DelegateRewardList>) -> Result<()> {
-    msg!("Delegating reward list: {:?}", ctx.accounts.reward_list.key());
+    msg!(
+        "Delegating reward list: {:?}",
+        ctx.accounts.reward_list.key()
+    );
     ctx.accounts.delegate_reward_list(
         &ctx.accounts.admin,
         &[

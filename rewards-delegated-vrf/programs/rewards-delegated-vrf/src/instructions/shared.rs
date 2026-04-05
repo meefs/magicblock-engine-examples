@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::get_associated_token_address;
-use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 use anchor_spl::metadata::mpl_token_metadata;
+use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 use ephemeral_rollups_sdk::{ephem::CallHandler, ActionArgs, ShortAccountMeta};
 
 use crate::errors::RewardError;
@@ -34,7 +34,8 @@ pub fn execute_reward_transfer<'info>(
                     amount,
                 });
 
-            let source_token_address = get_associated_token_address(&reward_distributor.key(), &mint);
+            let source_token_address =
+                get_associated_token_address(&reward_distributor.key(), &mint);
             let destination_token_address = get_associated_token_address(&destination.key(), &mint);
 
             let action_args = ActionArgs::new(instruction_data);
@@ -95,7 +96,8 @@ pub fn execute_reward_transfer<'info>(
                 &crate::instruction::TransferRewardProgrammableNft { amount },
             );
 
-            let source_token_address = get_associated_token_address(&reward_distributor.key(), &mint);
+            let source_token_address =
+                get_associated_token_address(&reward_distributor.key(), &mint);
             let destination_token_address = get_associated_token_address(&destination.key(), &mint);
 
             let (metadata_pda, _) = mpl_token_metadata::accounts::Metadata::find_pda(&mint);
@@ -103,7 +105,10 @@ pub fn execute_reward_transfer<'info>(
             let (source_token_record_pda, _) =
                 mpl_token_metadata::accounts::TokenRecord::find_pda(&mint, &source_token_address);
             let (destination_token_record_pda, _) =
-                mpl_token_metadata::accounts::TokenRecord::find_pda(&mint, &destination_token_address);
+                mpl_token_metadata::accounts::TokenRecord::find_pda(
+                    &mint,
+                    &destination_token_address,
+                );
 
             let auth_rule_pda = ruleset_pda.ok_or(RewardError::InvalidRewardType)?;
 
