@@ -509,31 +509,54 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
       user,
       clientSeed
     );
-    
+
     if (result.signature) {
       // Get the cluster endpoint from connection
       const clusterEndpoint = result.endpoint || connection.rpcEndpoint || "https://api.devnet.solana.com";
-      
-      // Add the request transaction to history
+
+      // Add the request transaction to history FIRST
       const txId = addTransaction(
         result.signature,
         "Request Random Reward",
         "devnet",
         clusterEndpoint
       );
-      
+
       // Update transaction to confirmed status immediately (use txId, not signature)
       updateTransaction(txId, {
         status: "confirmed",
       });
-      
+
+      // Now await the VRF callback and add it AFTER the request entry
+      if (result.callbackPromise) {
+        result.callbackPromise.then((callbackData) => {
+          if (callbackData) {
+            // Extract result number from log like "Random result: 42 for user: ..."
+            const resultMatch = callbackData.relevantLogs
+              .find(l => l.includes("Random result:"))
+              ?.match(/Random result:\s*(\d+)/);
+            const resultSuffix = resultMatch ? `: ${resultMatch[1]}` : "";
+            const callbackTxId = addTransaction(
+              callbackData.signature,
+              `Consume Random Reward VRF Callback${resultSuffix}`,
+              "devnet",
+              clusterEndpoint
+            );
+            updateTransaction(callbackTxId, {
+              status: callbackData.txStatus,
+              error: callbackData.error,
+            });
+          }
+        });
+      }
+
       setLocalStatus({
         loading: false,
         error: result.error || null,
         signature: result.signature,
         endpoint: result.endpoint || clusterEndpoint,
       });
-      
+
       if (result.success) {
         requestDashboardDataRefresh();
         setTimeout(() => {

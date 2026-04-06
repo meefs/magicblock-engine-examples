@@ -22,7 +22,6 @@ import {
   getAccount,
 } from "@solana/spl-token";
 import { MAGIC_CONTEXT_ID, MAGIC_PROGRAM_ID } from "@magicblock-labs/ephemeral-rollups-sdk";
-import { getDefaultSolanaEndpoint } from "@/lib/clusterContext";
 import {
   createCreateMasterEditionV3Instruction,
   createCreateMetadataAccountV3Instruction,
@@ -119,11 +118,19 @@ export interface TransactionStatus {
   signature: TransactionSignature | null;
 }
 
+export interface VrfCallbackData {
+  signature: string;
+  relevantLogs: string[];
+  txStatus: string;
+  error?: string;
+}
+
 export interface TransactionResponse {
   success: boolean;
   signature?: TransactionSignature;
   error?: string;
   endpoint?: string;
+  callbackPromise?: Promise<VrfCallbackData | null>;
 }
 
 interface UseTransactionProps {
@@ -571,91 +578,83 @@ export const useTransaction = (props?: UseTransactionProps) => {
            } as any)
            .transaction();
 
-         const result = await sendTransaction(tx, actionEndpoint);
-         setStatus({ 
-           loading: false, 
-           error: result.error || null, 
-           signature: result.signature || null 
-         });
+         // Set up VRF callback listener BEFORE sending the request to avoid race condition.
+         // Returns callback data via a promise so the caller can add it to history
+         // after the request entry (correct ordering).
+         let callbackListener: number | null = null;
+         let callbackListenerRemoved = false;
+         let callbackTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-         // If request was successful, listen for VRF callback logs
-         if (result.success && result.signature) {
-           let listener: number | null = null;
-           let listenerRemoved = false;
-           let callbackFound = false;
-           
-           const callbackReceived = new Promise<void>((resolve) => {
-             const timeoutId = setTimeout(() => {
-               if (listener !== null && !listenerRemoved) {
-                 provider.connection.removeOnLogsListener(listener);
-                 listenerRemoved = true;
-               }
-               resolve();
-             }, 30000); // 30 second timeout
+         const callbackPromise = new Promise<VrfCallbackData | null>((resolve) => {
+           callbackTimeoutId = setTimeout(() => {
+             if (callbackListener !== null && !callbackListenerRemoved) {
+               provider.connection.removeOnLogsListener(callbackListener);
+               callbackListenerRemoved = true;
+             }
+             resolve(null);
+           }, 30000);
 
-             listener = provider.connection.onLogs(
-              PROGRAM_ID,
-              (logs) => {
-                try {
+           try {
+             callbackListener = provider.connection.onLogs(
+               PROGRAM_ID,
+               (logs) => {
+                 try {
                    const relevantLogs = logs.logs.filter(
-                     (log) => 
-                       log.includes("Random result:") || 
-                       log.includes("Won reward") || 
+                     (log) =>
+                       log.includes("Random result:") ||
+                       log.includes("Won reward") ||
                        log.includes("exhausted") ||
                        log.includes("Reward:")
                    );
 
                    if (relevantLogs.length > 0) {
-                     callbackFound = true;
-                     const txStatus = logs.err ? "failed" : "confirmed";
-
-                     // Add the callback as a separate transaction entry
-                     if (props?.onTransactionAdd && props?.onTransactionUpdate) {
-                       const clusterEndpoint = result.endpoint || provider.connection.rpcEndpoint || getDefaultSolanaEndpoint();
-                       // Create a callback entry in the transaction history
-                       const callbackTxId = props.onTransactionAdd(
-                         logs.signature,
-                         `Consume Random Reward (VRF Callback)\n${relevantLogs.join("\n")}`,
-                         "devnet",
-                         clusterEndpoint
-                       );
-                       // Mark it with the correct status
-                       props.onTransactionUpdate(callbackTxId, {
-                         status: txStatus,
-                         error: logs.err ? JSON.stringify(logs.err) : undefined,
-                        });
-                      }
-                   }
-                   
-                   if (callbackFound) {
-                     if (listener !== null && !listenerRemoved) {
-                       provider.connection.removeOnLogsListener(listener);
-                       listenerRemoved = true;
+                     if (callbackListener !== null && !callbackListenerRemoved) {
+                       provider.connection.removeOnLogsListener(callbackListener);
+                       callbackListenerRemoved = true;
                      }
-                     clearTimeout(timeoutId);
-                     resolve();
+                     if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
+                     resolve({
+                       signature: logs.signature,
+                       relevantLogs,
+                       txStatus: logs.err ? "failed" : "confirmed",
+                       error: logs.err ? JSON.stringify(logs.err) : undefined,
+                     });
                    }
-                 } catch (err) {
-                   console.error("VRF callback log listener error:", err);
-                   if (listener !== null && !listenerRemoved) {
-                     provider.connection.removeOnLogsListener(listener);
-                     listenerRemoved = true;
+                 } catch {
+                   if (callbackListener !== null && !callbackListenerRemoved) {
+                     provider.connection.removeOnLogsListener(callbackListener);
+                     callbackListenerRemoved = true;
                    }
-                   clearTimeout(timeoutId);
-                   resolve();
+                   if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
+                   resolve(null);
                  }
                },
                "confirmed"
              );
-           });
+           } catch {
+             if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
+             resolve(null);
+           }
+         });
 
-           // Set up async callback update without blocking the transaction result
-           callbackReceived.catch((err) => {
-             console.error("Request random reward callback listener error:", err);
-           });
+         // Send the request
+         const result = await sendTransaction(tx, actionEndpoint);
+         setStatus({
+           loading: false,
+           error: result.error || null,
+           signature: result.signature || null
+         });
+
+         // Clean up listener if request failed
+         if (!result.success) {
+           if (callbackListener !== null && !callbackListenerRemoved) {
+             provider.connection.removeOnLogsListener(callbackListener);
+             callbackListenerRemoved = true;
+           }
+           if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
          }
 
-         return result;
+         return { ...result, callbackPromise };
        } catch (err) {
          const errorMessage = err instanceof Error ? err.message : "Unknown error";
          console.error("Request random reward error:", err);
