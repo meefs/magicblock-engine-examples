@@ -28,7 +28,7 @@ import {
     transferSpl,
     withdrawSpl,
     delegateSpl,
-    deriveShuttleAta
+    deriveShuttleAta, initVaultIx, initVaultAtaIx, delegateEphemeralAtaIx, deriveVault, deriveVaultAta,
 } from "@magicblock-labs/ephemeral-rollups-sdk";
 
 // Minimal SPL helpers (vendored) to avoid importing "@solana/spl-token" in the browser.
@@ -844,7 +844,8 @@ const App: React.FC = () => {
             if (amountBn <= 0n) throw new Error('Invalid amount');
 
             let privateTransfer:
-                | { minDelayMs: bigint; maxDelayMs: bigint; split: number }
+                | { minDelayMs: bigint; maxDelayMs: bigint; split: number; }
+                // | { minDelayMs: bigint; maxDelayMs: bigint; split: number; clientRefId: bigint }
                 | undefined;
             if (usesQueuedPrivateTransfer) {
                 if (!validator.current) {
@@ -853,25 +854,12 @@ const App: React.FC = () => {
                 const minDelayMsNumber = Number(privateMinDelayMs);
                 const maxDelayMsNumber = Number(privateMaxDelayMs);
                 const splitCountNumber = Number(privateSplitCount);
-                if (!Number.isInteger(minDelayMsNumber) || minDelayMsNumber < 0) {
-                    throw new Error('Private min delay must be a non-negative integer');
-                }
-                if (!Number.isInteger(maxDelayMsNumber) || maxDelayMsNumber < 0) {
-                    throw new Error('Private max delay must be a non-negative integer');
-                }
-                if (maxDelayMsNumber < minDelayMsNumber) {
-                    throw new Error('Private max delay must be greater than or equal to min delay');
-                }
-                if (!Number.isInteger(splitCountNumber) || splitCountNumber <= 0) {
-                    throw new Error('Private split must be a positive integer');
-                }
-                if (BigInt(splitCountNumber) > amountBn) {
-                    throw new Error('Private split cannot exceed the transfer amount in base units');
-                }
                 privateTransfer = {
                     minDelayMs: BigInt(minDelayMsNumber),
                     maxDelayMs: BigInt(maxDelayMsNumber),
                     split: splitCountNumber,
+                    // Optional client reference ID, encrypted, can be used to confirm a payment
+                    // clientRefId: BigInt(crypto.getRandomValues(new Uint32Array(1))[0]),
                 };
             }
 
@@ -889,7 +877,7 @@ const App: React.FC = () => {
                     validator: validator.current,
                     initIfMissing: true,
                     initAtasIfMissing: true,
-                    initVaultIfMissing: true,
+                    initVaultIfMissing: false,
                     privateTransfer,
                     shuttleId
                 },
@@ -989,9 +977,14 @@ const App: React.FC = () => {
 
             // Helper to create mint + ATAs + mintTo on a given connection
             const setupOn = async (conn: Connection) => {
+                const mint = mintKp.publicKey;
                 const ataPubkeys = accounts.map(a => getAssociatedTokenAddressSync(mintKp.publicKey, a.keypair.publicKey));
                 const [transferQueue] = deriveTransferQueue(mintKp.publicKey, queueValidator);
                 const magicFeeVault = magicFeeVaultPdaFromValidator(queueValidator);
+                const [vault] = deriveVault(mint);
+                const [vaultEphemeralAta] = deriveEphemeralAta(vault, mint);
+                const vaultAta = deriveVaultAta(mint, vault);
+
                 const [rentPda] = deriveRentPda();
                 console.log("Rent sponsor PDA: ", rentPda.toBase58());
 
@@ -1049,10 +1042,26 @@ const App: React.FC = () => {
                     ),
                 );
                 mintTx.feePayer = payer.publicKey;
+                const setupVaultTx = new Transaction().add(
+                    initVaultIx(vault, mint, payer.publicKey),
+                    initVaultAtaIx(payer.publicKey, vaultAta, vault, mint),
+                    delegateEphemeralAtaIx(payer.publicKey, vaultEphemeralAta, validator.current),
+
+                );
                 const mintSig = await sendAndConfirmTransaction(
                     conn,
                     mintTx,
                     [payer, mintKp],
+                    {
+                        commitment: 'confirmed',
+                        preflightCommitment: 'confirmed',
+                        skipPreflight: true,
+                    },
+                );
+                await sendAndConfirmTransaction(
+                    conn,
+                    setupVaultTx,
+                    [payer],
                     {
                         commitment: 'confirmed',
                         preflightCommitment: 'confirmed',
