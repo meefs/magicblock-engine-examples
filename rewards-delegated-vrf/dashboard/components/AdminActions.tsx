@@ -45,6 +45,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     setRewardList,
     requestRandomReward,
     addReward,
+    addRewardsBatch,
     removeReward,
     updateReward,
   } = useTransaction({ 
@@ -103,6 +104,18 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
   const [availableDistributorMints, setAvailableDistributorMints] = useState<OwnedSplMintOption[]>([]);
   const [loadingDistributorMints, setLoadingDistributorMints] = useState(false);
   const [distributorMintFetchError, setDistributorMintFetchError] = useState<string | null>(null);
+
+  interface BatchRewardEntry {
+    rewardName: string;
+    rewardMint: string;
+    rewardAmount: number;
+    drawRangeMin: number;
+    drawRangeMax: number;
+    redemptionLimit: number;
+    isNftLike: boolean;
+  }
+  const [batchRewards, setBatchRewards] = useState<BatchRewardEntry[]>([]);
+
   const availableRewardNames = Array.from(
     new Set(
       (rewardList?.rewards ?? [])
@@ -162,6 +175,11 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
   const isSelectedUpdateRewardNft =
     selectedUpdateRewardType === "legacyNft" ||
     selectedUpdateRewardType === "programmableNft";
+  const alreadyAddedRewardMints = new Set(
+    (rewardList?.rewards ?? []).flatMap((reward: any) =>
+      (reward.rewardMints ?? []).map((mint: any) => mint?.toString?.())
+    ).filter(Boolean)
+  );
   const selectedUpdateRewardTypeLabel =
     selectedUpdateRewardType === "legacyNft"
       ? "Legacy NFT"
@@ -270,6 +288,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
   const closeModal = () => {
     setLocalStatus({ loading: false, error: null, signature: null, endpoint: null });
     setActiveModal(null);
+    setBatchRewards([]);
   };
 
   const setLoadingStatus = () => {
@@ -574,16 +593,72 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     }
   };
 
-  const handleAddReward = async () => {
-    setLoadingStatus();
+  const handleAddToBatch = () => {
     const config = forms.addReward;
     if (!config.rewardName.trim()) {
       setValidationError("Reward name is required");
       return;
     }
+    if (!config.rewardMint.trim()) {
+      setValidationError("Mint address is required");
+      return;
+    }
 
-    const rewardMint = parsePublicKey(config.rewardMint, "Mint address");
-    if (!rewardMint) return;
+    const mintOption = availableDistributorMints.find(
+      (option) => option.mint === config.rewardMint
+    );
+
+    setBatchRewards((prev) => [
+      ...prev,
+      {
+        rewardName: config.rewardName.trim(),
+        rewardMint: config.rewardMint.trim(),
+        rewardAmount: config.rewardAmount,
+        drawRangeMin: selectedExistingAddReward ? selectedExistingAddReward.drawRangeMin : config.drawRangeMin,
+        drawRangeMax: selectedExistingAddReward ? selectedExistingAddReward.drawRangeMax : config.drawRangeMax,
+        redemptionLimit: config.redemptionLimit,
+        isNftLike: mintOption?.isNftLike ?? false,
+      },
+    ]);
+
+    setForms({
+      ...forms,
+      addReward: {
+        ...forms.addReward,
+        rewardMint: "",
+        rewardAmount: 1,
+        redemptionLimit: 1,
+      },
+    });
+    setLocalStatus({ ...localStatus, error: null });
+  };
+
+  const handleAddReward = async () => {
+    const allEntries = [...batchRewards];
+
+    // Include current form if filled
+    const config = forms.addReward;
+    if (config.rewardName.trim() && config.rewardMint.trim()) {
+      const mintOption = availableDistributorMints.find(
+        (option) => option.mint === config.rewardMint
+      );
+      allEntries.push({
+        rewardName: config.rewardName.trim(),
+        rewardMint: config.rewardMint.trim(),
+        rewardAmount: config.rewardAmount,
+        drawRangeMin: selectedExistingAddReward ? selectedExistingAddReward.drawRangeMin : config.drawRangeMin,
+        drawRangeMax: selectedExistingAddReward ? selectedExistingAddReward.drawRangeMax : config.drawRangeMax,
+        redemptionLimit: config.redemptionLimit,
+        isNftLike: mintOption?.isNftLike ?? false,
+      });
+    }
+
+    if (allEntries.length === 0) {
+      setValidationError("No rewards to add");
+      return;
+    }
+
+    setLoadingStatus();
 
     if (!rewardList?.rewardDistributor) {
       setValidationError("Reward list is not loaded for the selected distributor");
@@ -596,45 +671,104 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     );
     if (!rewardDistributor) return;
 
-    const selectedDistributorMint =
-      availableDistributorMints.find(
-        (option) => option.tokenAccount === config.rewardMint.trim()
-      ) ??
-      availableDistributorMints.find((option) => option.mint === rewardMint.toBase58());
-    const tokenAccount = selectedDistributorMint
-      ? new PublicKey(selectedDistributorMint.tokenAccount)
-      : getAssociatedTokenAddressSync(rewardMint, rewardDistributor, true);
-    const [metadataAccount] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("metadata"),
-        new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").toBuffer(),
-        rewardMint.toBuffer(),
-      ],
-      new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
-    );
-    const result = await addReward(
-      config.rewardName,
-      rewardMint,
-      tokenAccount,
-      config.rewardAmount,
-      selectedExistingAddReward ? undefined : config.drawRangeMin,
-      selectedExistingAddReward ? undefined : config.drawRangeMax,
-      config.redemptionLimit,
-      metadataAccount
-    );
-    await handleTransactionResult(result, "Add Reward", () => {
-      setForms({
-        ...forms,
-        addReward: {
-          rewardName: "",
-          rewardMint: "",
-          rewardAmount: 0,
-          drawRangeMin: 0,
-          drawRangeMax: 0,
-          redemptionLimit: 0
-        },
+    const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+    if (allEntries.length === 1) {
+      // Single reward - use original addReward for backward compatibility
+      const entry = allEntries[0];
+      const rewardMint = parsePublicKey(entry.rewardMint, "Mint address");
+      if (!rewardMint) return;
+
+      const selectedDistributorMint =
+        availableDistributorMints.find(
+          (option) => option.tokenAccount === entry.rewardMint
+        ) ??
+        availableDistributorMints.find((option) => option.mint === rewardMint.toBase58());
+      const tokenAccount = selectedDistributorMint
+        ? new PublicKey(selectedDistributorMint.tokenAccount)
+        : getAssociatedTokenAddressSync(rewardMint, rewardDistributor, true);
+      const [metadataAccount] = PublicKey.findProgramAddressSync(
+        [Buffer.from("metadata"), METADATA_PROGRAM_ID.toBuffer(), rewardMint.toBuffer()],
+        METADATA_PROGRAM_ID
+      );
+
+      const existingReward = (rewardList?.rewards ?? []).find(
+        (r: any) => r.name === entry.rewardName || r.rewardName === entry.rewardName
+      );
+
+      const result = await addReward(
+        entry.rewardName,
+        rewardMint,
+        tokenAccount,
+        entry.rewardAmount,
+        existingReward ? undefined : entry.drawRangeMin,
+        existingReward ? undefined : entry.drawRangeMax,
+        entry.redemptionLimit,
+        metadataAccount
+      );
+      await handleTransactionResult(result, "Add Reward", () => {
+        setBatchRewards([]);
+        setForms({
+          ...forms,
+          addReward: {
+            rewardName: "",
+            rewardMint: "",
+            rewardAmount: 1,
+            drawRangeMin: 0,
+            drawRangeMax: 0,
+            redemptionLimit: 1,
+          },
+        });
       });
-    });
+    } else {
+      // Multiple rewards - batch into single transaction
+      const batchParams = allEntries.map((entry) => {
+        const rewardMint = new PublicKey(entry.rewardMint);
+        const selectedDistributorMint =
+          availableDistributorMints.find(
+            (option) => option.tokenAccount === entry.rewardMint
+          ) ??
+          availableDistributorMints.find((option) => option.mint === rewardMint.toBase58());
+        const tokenAccount = selectedDistributorMint
+          ? new PublicKey(selectedDistributorMint.tokenAccount)
+          : getAssociatedTokenAddressSync(rewardMint, rewardDistributor, true);
+        const [metadataAccount] = PublicKey.findProgramAddressSync(
+          [Buffer.from("metadata"), METADATA_PROGRAM_ID.toBuffer(), rewardMint.toBuffer()],
+          METADATA_PROGRAM_ID
+        );
+
+        const existingReward = (rewardList?.rewards ?? []).find(
+          (r: any) => r.name === entry.rewardName || r.rewardName === entry.rewardName
+        );
+
+        return {
+          rewardName: entry.rewardName,
+          rewardMint,
+          tokenAccount,
+          rewardAmount: entry.rewardAmount,
+          drawRangeMin: existingReward ? undefined : entry.drawRangeMin,
+          drawRangeMax: existingReward ? undefined : entry.drawRangeMax,
+          redemptionLimit: entry.redemptionLimit,
+          metadataAccount,
+        };
+      });
+
+      const result = await addRewardsBatch(batchParams);
+      await handleTransactionResult(result, `Add ${allEntries.length} Rewards`, () => {
+        setBatchRewards([]);
+        setForms({
+          ...forms,
+          addReward: {
+            rewardName: "",
+            rewardMint: "",
+            rewardAmount: 1,
+            drawRangeMin: 0,
+            drawRangeMax: 0,
+            redemptionLimit: 1,
+          },
+        });
+      });
+    }
   };
 
   const handleRemoveReward = async () => {
@@ -1217,7 +1351,9 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                 <option value="">
                   {availableDistributorMints.length > 0 ? "Select distributor mint" : "No distributor token accounts found"}
                 </option>
-                {availableDistributorMints.map((option) => (
+                {availableDistributorMints
+                  .filter((option) => !option.isNftLike || (!alreadyAddedRewardMints.has(option.mint) && !batchRewards.some((b) => b.rewardMint === option.mint)))
+                  .map((option) => (
                   <option key={option.tokenAccount} value={option.mint}>
                     {shortAddress(option.mint, 5)} ({option.balanceLabel})
                   </option>
@@ -1332,6 +1468,49 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                     <span className="whitespace-nowrap">
                       {reward.drawRangeMin} - {reward.drawRangeMax}
                     </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Add to Batch button */}
+          <button
+            type="button"
+            onClick={handleAddToBatch}
+            disabled={localStatus.loading || !forms.addReward.rewardName.trim() || !forms.addReward.rewardMint.trim()}
+            className="w-full px-3 py-2 rounded-lg border border-dashed border-gray-500 text-gray-300 hover:bg-gray-700 hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm"
+          >
+            + Add to Batch
+          </button>
+
+          {/* Batch Queue */}
+          {batchRewards.length > 0 && (
+            <div className="rounded border border-gray-700 bg-gray-900/60 p-3">
+              <p className="mb-2 text-sm font-medium text-gray-200">
+                Batched Rewards ({batchRewards.length})
+              </p>
+              <div className="space-y-1">
+                {batchRewards.map((entry, index) => (
+                  <div
+                    key={`${entry.rewardName}-${entry.rewardMint}-${index}`}
+                    className="flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-gray-300 truncate block">
+                        {entry.rewardName} — {shortAddress(entry.rewardMint, 4)}
+                        {entry.isNftLike ? " (NFT)" : ` x${entry.rewardAmount}`}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBatchRewards((prev) => prev.filter((_, i) => i !== index))
+                      }
+                      className="text-red-400 hover:text-red-300 flex-shrink-0"
+                    >
+                      ✕
+                    </button>
                   </div>
                 ))}
               </div>

@@ -26,6 +26,7 @@ import {
   createCreateMasterEditionV3Instruction,
   createCreateMetadataAccountV3Instruction,
   createSetAndVerifySizedCollectionItemInstruction,
+  createUpdateMetadataAccountV2Instruction,
 } from "@metaplex-foundation/mpl-token-metadata";
 
 type AdminActionEndpointMode = "solana" | "magicblock";
@@ -723,6 +724,71 @@ export const useTransaction = (props?: UseTransactionProps) => {
         [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
         );
 
+  const addRewardsBatch = useCallback(
+    async (
+      rewards: Array<{
+        rewardName: string;
+        rewardMint: PublicKey;
+        tokenAccount: PublicKey;
+        rewardAmount?: number;
+        drawRangeMin?: number;
+        drawRangeMax?: number;
+        redemptionLimit?: number;
+        metadataAccount?: PublicKey;
+      }>
+    ): Promise<TransactionResponse> => {
+      if (!publicKey) return { success: false, error: "Wallet not connected" };
+      if (rewards.length === 0) return { success: false, error: "No rewards to add" };
+
+      setStatus({ loading: true, error: null, signature: null });
+
+      try {
+        const actionEndpoint = getActionEndpoint("magicblock");
+        const provider = createProvider(actionEndpoint);
+        const program = await createProgram(provider);
+        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
+        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
+
+        const tx = new anchor.web3.Transaction();
+
+        for (const reward of rewards) {
+          const ix = await program.methods
+            .addReward(
+              reward.rewardName,
+              reward.rewardAmount ? new anchor.BN(reward.rewardAmount) : null,
+              reward.drawRangeMin || null,
+              reward.drawRangeMax || null,
+              reward.redemptionLimit ? new anchor.BN(reward.redemptionLimit) : null,
+            )
+            .accounts({
+              admin: publicKey,
+              rewardDistributor: rewardDistributorPda,
+              rewardList: rewardListPda,
+              mint: reward.rewardMint,
+              tokenAccount: reward.tokenAccount,
+              metadata: reward.metadataAccount ?? null,
+            } as any)
+            .instruction();
+
+          tx.add(ix);
+        }
+
+        const result = await sendTransaction(tx, actionEndpoint);
+        setStatus({
+          loading: false,
+          error: result.error || null,
+          signature: result.signature || null,
+        });
+        return result;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error: errorMessage, signature: null });
+        return { success: false, error: errorMessage };
+      }
+    },
+    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
+  );
+
   const removeReward = useCallback(
     async (rewardName: string, rewardMint?: PublicKey, redemptionAmount?: number): Promise<TransactionResponse> => {
       if (!publicKey) return { success: false, error: "Wallet not connected" };
@@ -1349,6 +1415,103 @@ export const useTransaction = (props?: UseTransactionProps) => {
     [publicKey, connection, signTransaction, getActionEndpoint, props?.selectedDistributor]
   );
 
+  const updateNftMetadata = useCallback(
+    async (
+      mint: PublicKey,
+      name: string,
+      symbol: string,
+      uri: string
+    ): Promise<TransactionResponse> => {
+      if (!publicKey || !signTransaction) {
+        return { success: false, error: "Wallet not connected" };
+      }
+
+      try {
+        const actionEndpoint = getActionEndpoint("solana");
+        const txConnection =
+          actionEndpoint && actionEndpoint !== connection.rpcEndpoint
+            ? new anchor.web3.Connection(actionEndpoint, "confirmed")
+            : connection;
+
+        const trimmedName = name.trim();
+        const trimmedSymbol = symbol.trim();
+        const trimmedUri = uri.trim();
+
+        if (!trimmedName || !trimmedSymbol || !trimmedUri) {
+          throw new Error("Name, symbol, and URI are required");
+        }
+
+        const [metadataAddress] = PublicKey.findProgramAddressSync(
+          [
+            Buffer.from("metadata"),
+            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+            mint.toBuffer(),
+          ],
+          TOKEN_METADATA_PROGRAM_ID
+        );
+
+        setStatus({ loading: true, error: null, signature: null });
+
+        const transaction = new anchor.web3.Transaction().add(
+          createUpdateMetadataAccountV2Instruction(
+            {
+              metadata: metadataAddress,
+              updateAuthority: publicKey,
+            },
+            {
+              updateMetadataAccountArgsV2: {
+                data: {
+                  name: trimmedName,
+                  symbol: trimmedSymbol,
+                  uri: trimmedUri,
+                  sellerFeeBasisPoints: 0,
+                  creators: [
+                    {
+                      address: publicKey,
+                      verified: true,
+                      share: 100,
+                    },
+                  ],
+                  collection: null,
+                  uses: null,
+                },
+                updateAuthority: publicKey,
+                primarySaleHappened: null,
+                isMutable: null,
+              },
+            }
+          )
+        );
+
+        transaction.feePayer = publicKey;
+        transaction.recentBlockhash = (
+          await txConnection.getLatestBlockhash()
+        ).blockhash;
+
+        const signedTx = await signTransaction(transaction);
+        const signature = await txConnection.sendRawTransaction(
+          signedTx.serialize(),
+          { skipPreflight: true, maxRetries: 3 }
+        );
+
+        await txConnection.confirmTransaction(signature, "confirmed");
+
+        setStatus({ loading: false, error: null, signature });
+        return {
+          success: true,
+          signature,
+          endpoint: txConnection.rpcEndpoint,
+        };
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : "Unknown error occurred";
+        setStatus({ loading: false, error: errorMessage, signature: null });
+        return { success: false, error: errorMessage };
+      }
+    },
+    [publicKey, connection, signTransaction, getActionEndpoint]
+  );
+
   return {
     status,
     initializeRewardDistributor,
@@ -1359,10 +1522,12 @@ export const useTransaction = (props?: UseTransactionProps) => {
     undelegateRewardList,
     requestRandomReward,
     addReward,
+    addRewardsBatch,
     removeReward,
     updateReward,
     mintNftCollection,
     mintNftToCollection,
+    updateNftMetadata,
     sendSplTokenToDistributor,
   };
 };
