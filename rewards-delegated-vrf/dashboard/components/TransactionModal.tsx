@@ -14,6 +14,7 @@ export interface TransactionModalProps {
   endpoint?: string;
   onClose: () => void;
   onConfirm: () => Promise<void>;
+  onMintAgain?: () => void;
   children?: React.ReactNode;
 }
 
@@ -27,6 +28,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   endpoint,
   onClose,
   onConfirm,
+  onMintAgain,
   children,
 }) => {
   if (!isOpen) return null;
@@ -145,6 +147,14 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               ) : (
                 "Confirm"
               )}
+            </button>
+          )}
+          {signature && !error && onMintAgain && (
+            <button
+              onClick={onMintAgain}
+              className="flex-1 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+            >
+              Mint Again
             </button>
           )}
         </div>

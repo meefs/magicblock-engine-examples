@@ -259,17 +259,13 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
         requestDashboardDataRefresh();
       }
       setLocalStatus({ loading: false, error: null, signature: result.signature });
-      setTimeout(() => {
-        setActiveModal(null);
-        setForms({
-          ...forms,
-          mintToCollection: { collectionMint: "", name: "", symbol: "", uri: "" },
-        });
-        setLocalStatus({ loading: false, error: null, signature: null });
-      }, 2000);
     } else {
       setLocalStatus({ loading: false, error: result.error || "Unknown error", signature: null });
     }
+  };
+
+  const handleMintToCollectionAgain = () => {
+    setLocalStatus({ loading: false, error: null, signature: null });
   };
 
   if (!publicKey) {
@@ -384,6 +380,7 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
         signature={localStatus.signature}
         onClose={() => setActiveModal(null)}
         onConfirm={handleMintToCollection}
+        onMintAgain={handleMintToCollectionAgain}
       >
         <div className="space-y-3">
           <div>
