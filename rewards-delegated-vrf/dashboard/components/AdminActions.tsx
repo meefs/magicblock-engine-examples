@@ -47,6 +47,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     addReward,
     addRewardsBatch,
     removeReward,
+    removeRewardsBatch,
     updateReward,
   } = useTransaction({ 
     selectedDistributor,
@@ -115,6 +116,13 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     isNftLike: boolean;
   }
   const [batchRewards, setBatchRewards] = useState<BatchRewardEntry[]>([]);
+
+  interface BatchRemoveRewardEntry {
+    rewardName: string;
+    rewardMint: string;
+    redemptionAmount: number;
+  }
+  const [batchRemoveRewards, setBatchRemoveRewards] = useState<BatchRemoveRewardEntry[]>([]);
 
   const availableRewardNames = Array.from(
     new Set(
@@ -771,29 +779,89 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     }
   };
 
-  const handleRemoveReward = async () => {
-    setLoadingStatus();
+  const handleAddToRemoveBatch = () => {
     const config = forms.removeReward;
     if (!config.rewardName.trim()) {
       setValidationError("Reward name is required");
       return;
     }
+    if (!config.rewardMint.trim()) {
+      setValidationError("Mint address is required");
+      return;
+    }
 
-    const parsedRewardMint = config.rewardMint
-      ? parsePublicKey(config.rewardMint, "Mint address")
-      : null;
-    const rewardMint = parsedRewardMint ?? undefined;
-    if (config.rewardMint && !rewardMint) return;
+    setBatchRemoveRewards((prev) => [
+      ...prev,
+      {
+        rewardName: config.rewardName.trim(),
+        rewardMint: config.rewardMint.trim(),
+        redemptionAmount: config.redemptionAmount,
+      },
+    ]);
 
-    const result = await removeReward(
-      config.rewardName,
-      rewardMint,
-      config.redemptionAmount
-    );
-
-    await handleTransactionResult(result, "Remove Reward", () => {
-      setForms({ ...forms, removeReward: { rewardName: "", rewardMint: "", redemptionAmount: 1 } });
+    setForms({
+      ...forms,
+      removeReward: {
+        ...forms.removeReward,
+        rewardMint: "",
+        redemptionAmount: 1,
+      },
     });
+    setLocalStatus({ ...localStatus, error: null });
+  };
+
+  const handleRemoveReward = async () => {
+    const allEntries = [...batchRemoveRewards];
+
+    // Include current form if filled
+    const config = forms.removeReward;
+    if (config.rewardName.trim() && config.rewardMint.trim()) {
+      allEntries.push({
+        rewardName: config.rewardName.trim(),
+        rewardMint: config.rewardMint.trim(),
+        redemptionAmount: config.redemptionAmount,
+      });
+    }
+
+    if (allEntries.length === 0) {
+      setValidationError("No rewards to remove");
+      return;
+    }
+
+    setLoadingStatus();
+
+    const resetForm = () => {
+      setBatchRemoveRewards([]);
+      setForms({ ...forms, removeReward: { rewardName: "", rewardMint: "", redemptionAmount: 1 } });
+    };
+
+    if (allEntries.length === 1) {
+      // Single reward - use original removeReward for backward compatibility
+      const entry = allEntries[0];
+      const parsedRewardMint = entry.rewardMint
+        ? parsePublicKey(entry.rewardMint, "Mint address")
+        : null;
+      const rewardMint = parsedRewardMint ?? undefined;
+      if (entry.rewardMint && !rewardMint) return;
+
+      const result = await removeReward(
+        entry.rewardName,
+        rewardMint,
+        entry.redemptionAmount
+      );
+
+      await handleTransactionResult(result, "Remove Reward", resetForm);
+    } else {
+      // Multiple rewards - batch into single transaction
+      const batchParams = allEntries.map((entry) => ({
+        rewardName: entry.rewardName,
+        rewardMint: entry.rewardMint ? new PublicKey(entry.rewardMint) : undefined,
+        redemptionAmount: entry.redemptionAmount,
+      }));
+
+      const result = await removeRewardsBatch(batchParams);
+      await handleTransactionResult(result, `Remove ${allEntries.length} Rewards`, resetForm);
+    }
   };
 
   const handleUpdateReward = async () => {
@@ -1734,7 +1802,9 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                   ? "Select reward mint"
                   : "No reward mints found"}
               </option>
-              {availableRewardRemovalMints.map((mint) => (
+              {availableRewardRemovalMints
+                .filter((mint) => !batchRemoveRewards.some((b) => b.rewardMint === mint))
+                .map((mint) => (
                 <option key={mint} value={mint}>
                   {shortAddress(mint, 5)}
                 </option>
@@ -1760,8 +1830,50 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
             <p className="text-xs text-gray-400 mt-1">Amount to redeem from the reward</p>
           </div>
 
+          {/* Add to Batch button */}
+          <button
+            type="button"
+            onClick={handleAddToRemoveBatch}
+            disabled={localStatus.loading || !forms.removeReward.rewardName.trim() || !forms.removeReward.rewardMint.trim()}
+            className="w-full px-3 py-2 rounded-lg border border-dashed border-gray-500 text-gray-300 hover:bg-gray-700 hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm"
+          >
+            + Add to Batch
+          </button>
+
+          {/* Batch Queue */}
+          {batchRemoveRewards.length > 0 && (
+            <div className="rounded border border-gray-700 bg-gray-900/60 p-3">
+              <p className="mb-2 text-sm font-medium text-gray-200">
+                Batched Removals ({batchRemoveRewards.length})
+              </p>
+              <div className="space-y-1">
+                {batchRemoveRewards.map((entry, index) => (
+                  <div
+                    key={`${entry.rewardName}-${entry.rewardMint}-${index}`}
+                    className="flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-gray-300 truncate block">
+                        {entry.rewardName} — {shortAddress(entry.rewardMint, 4)} x{entry.redemptionAmount}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBatchRemoveRewards((prev) => prev.filter((_, i) => i !== index))
+                      }
+                      className="text-red-400 hover:text-red-300 flex-shrink-0"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="bg-gray-800 p-2 rounded text-xs text-gray-400">
-            💡 Select the reward and mint from the dropdowns, then choose the redemption amount
+            Select the reward and mint, then add to batch or confirm directly
           </div>
         </div>
       </TransactionModal>

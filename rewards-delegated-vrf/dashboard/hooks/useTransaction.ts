@@ -833,6 +833,66 @@ export const useTransaction = (props?: UseTransactionProps) => {
     [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
   );
 
+  const removeRewardsBatch = useCallback(
+    async (
+      items: Array<{
+        rewardName: string;
+        rewardMint?: PublicKey;
+        redemptionAmount?: number;
+      }>
+    ): Promise<TransactionResponse> => {
+      if (!publicKey) return { success: false, error: "Wallet not connected" };
+      if (items.length === 0) return { success: false, error: "No rewards to remove" };
+
+      setStatus({ loading: true, error: null, signature: null });
+
+      try {
+        const actionEndpoint = getActionEndpoint("magicblock");
+        const provider = createProvider(actionEndpoint);
+        const program = await createProgram(provider);
+        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
+        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
+        const [transferLookupTablePda] = PDAs.getTransferLookupTable();
+
+        const tx = new anchor.web3.Transaction();
+
+        for (const item of items) {
+          const ix = await program.methods
+            .removeReward(
+              item.rewardName,
+              item.rewardMint || null,
+              item.redemptionAmount ? new anchor.BN(item.redemptionAmount) : null
+            )
+            .accounts({
+              admin: publicKey,
+              rewardDistributor: rewardDistributorPda,
+              rewardList: rewardListPda,
+              transferLookupTable: transferLookupTablePda,
+              destination: publicKey,
+              magicProgram: MAGIC_PROGRAM_ID,
+              magicContext: MAGIC_CONTEXT_ID,
+            } as any)
+            .instruction();
+
+          tx.add(ix);
+        }
+
+        const result = await sendTransaction(tx, actionEndpoint);
+        setStatus({
+          loading: false,
+          error: result.error || null,
+          signature: result.signature || null,
+        });
+        return result;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error: errorMessage, signature: null });
+        return { success: false, error: errorMessage };
+      }
+    },
+    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
+  );
+
   const updateReward = useCallback(
     async (
       currentRewardName: string,
@@ -1524,6 +1584,7 @@ export const useTransaction = (props?: UseTransactionProps) => {
     addReward,
     addRewardsBatch,
     removeReward,
+    removeRewardsBatch,
     updateReward,
     mintNftCollection,
     mintNftToCollection,
