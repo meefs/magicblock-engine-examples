@@ -122,7 +122,7 @@ export interface TransactionStatus {
 export interface VrfCallbackData {
   signature: string;
   relevantLogs: string[];
-  txStatus: string;
+  txStatus: "confirmed" | "failed" | "pending";
   error?: string;
 }
 
