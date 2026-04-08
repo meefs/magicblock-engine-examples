@@ -15,7 +15,9 @@ import { useTransaction } from "@/hooks/useTransaction";
 import { useGlobalTransactionHistory } from "@/hooks/useGlobalTransactionHistory";
 import { useRewardData } from "@/hooks/useRewardData";
 import { PDAs } from "@/lib/pda";
-import { getDefaultSolanaEndpoint } from "@/lib/clusterContext";
+import { getBaseLayerSolanaEndpoint, getDefaultSolanaEndpoint } from "@/lib/clusterContext";
+import { Connection } from "@solana/web3.js";
+import { Metadata } from "@metaplex-foundation/mpl-token-metadata";
 import {
   fetchOwnedSplMintOptions,
   type OwnedSplMintOption,
@@ -105,6 +107,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
   const [availableDistributorMints, setAvailableDistributorMints] = useState<OwnedSplMintOption[]>([]);
   const [loadingDistributorMints, setLoadingDistributorMints] = useState(false);
   const [distributorMintFetchError, setDistributorMintFetchError] = useState<string | null>(null);
+  const [mintSymbols, setMintSymbols] = useState<Map<string, string>>(new Map());
 
   interface BatchRewardEntry {
     rewardName: string;
@@ -412,6 +415,64 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
       cancelled = true;
     };
   }, [activeModal, connection.rpcEndpoint, targetDistributorKey]);
+
+  // Fetch Metaplex metadata names for all known mints
+  useEffect(() => {
+    let cancelled = false;
+    const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+    const fetchNames = async () => {
+      const allMintStrings = new Set<string>();
+      for (const opt of availableDistributorMints) allMintStrings.add(opt.mint);
+      for (const m of availableRewardRemovalMints) allMintStrings.add(m);
+
+      // Only fetch mints we don't already have names for
+      const toFetch = Array.from(allMintStrings).filter((m) => !mintSymbols.has(m));
+      if (toFetch.length === 0) return;
+
+      try {
+        const readEndpoint = getBaseLayerSolanaEndpoint(connection.rpcEndpoint);
+        const readConnection =
+          readEndpoint === connection.rpcEndpoint
+            ? connection
+            : new Connection(readEndpoint, "confirmed");
+
+        const mintKeys = toFetch.map((m) => new PublicKey(m));
+        const metadataPdas = mintKeys.map(
+          (mint) =>
+            PublicKey.findProgramAddressSync(
+              [Buffer.from("metadata"), METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+              METADATA_PROGRAM_ID
+            )[0]
+        );
+
+        const accounts = await readConnection.getMultipleAccountsInfo(metadataPdas);
+        const newNames = new Map(mintSymbols);
+
+        mintKeys.forEach((mint, index) => {
+          const account = accounts[index];
+          if (!account) return;
+          try {
+            const [metadata] = Metadata.deserialize(account.data);
+            const symbol =
+              typeof metadata.data.symbol === "string"
+                ? metadata.data.symbol.replace(/\0/g, "").trim()
+                : "";
+            if (symbol) newNames.set(mint.toBase58(), symbol);
+          } catch {
+            // no metadata for this mint
+          }
+        });
+
+        if (!cancelled) setMintSymbols(newNames);
+      } catch (error) {
+        console.error("[AdminActions] Failed to fetch mint metadata names:", error);
+      }
+    };
+
+    void fetchNames();
+    return () => { cancelled = true; };
+  }, [availableDistributorMints, availableRewardRemovalMints, connection.rpcEndpoint]);
 
   // Helper to handle transaction result
   const handleTransactionResult = async (
@@ -1423,7 +1484,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                   .filter((option) => !option.isNftLike || (!alreadyAddedRewardMints.has(option.mint) && !batchRewards.some((b) => b.rewardMint === option.mint)))
                   .map((option) => (
                   <option key={option.tokenAccount} value={option.mint}>
-                    {shortAddress(option.mint, 5)} ({option.balanceLabel})
+                    {shortAddress(option.mint, 5)}{mintSymbols.get(option.mint) ? ` (${mintSymbols.get(option.mint)})` : ""} ({option.balanceLabel})
                   </option>
                 ))}
               </select>
@@ -1566,7 +1627,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                   >
                     <div className="flex-1 min-w-0">
                       <span className="text-gray-300 truncate block">
-                        {entry.rewardName} — {shortAddress(entry.rewardMint, 4)}
+                        {entry.rewardName} — {shortAddress(entry.rewardMint, 4)}{mintSymbols.get(entry.rewardMint) ? ` (${mintSymbols.get(entry.rewardMint)})` : ""}
                         {entry.isNftLike ? " (NFT)" : ` x${entry.rewardAmount}`}
                       </span>
                     </div>
@@ -1806,7 +1867,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                 .filter((mint) => !batchRemoveRewards.some((b) => b.rewardMint === mint))
                 .map((mint) => (
                 <option key={mint} value={mint}>
-                  {shortAddress(mint, 5)}
+                  {shortAddress(mint, 5)}{mintSymbols.get(mint) ? ` (${mintSymbols.get(mint)})` : ""}
                 </option>
               ))}
             </select>
@@ -1854,7 +1915,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
                   >
                     <div className="flex-1 min-w-0">
                       <span className="text-gray-300 truncate block">
-                        {entry.rewardName} — {shortAddress(entry.rewardMint, 4)} x{entry.redemptionAmount}
+                        {entry.rewardName} — {shortAddress(entry.rewardMint, 4)}{mintSymbols.get(entry.rewardMint) ? ` (${mintSymbols.get(entry.rewardMint)})` : ""} x{entry.redemptionAmount}
                       </span>
                     </div>
                     <button

@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { Metadata } from "@metaplex-foundation/mpl-token-metadata";
 import { useTransaction } from "@/hooks/useTransaction";
 import { useGlobalTransactionHistory } from "@/hooks/useGlobalTransactionHistory";
-import { getDefaultSolanaEndpoint } from "@/lib/clusterContext";
+import { getBaseLayerSolanaEndpoint, getDefaultSolanaEndpoint } from "@/lib/clusterContext";
 import { requestDashboardDataRefresh } from "@/lib/refresh";
 import { shortAddress } from "@/lib/utils";
 import {
@@ -50,6 +51,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
   const [availableWalletMints, setAvailableWalletMints] = useState<OwnedSplMintOption[]>([]);
   const [loadingWalletMints, setLoadingWalletMints] = useState(false);
   const [walletMintFetchError, setWalletMintFetchError] = useState<string | null>(null);
+  const [mintSymbols, setMintSymbols] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (externalOpen) {
@@ -100,6 +102,61 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
       cancelled = true;
     };
   }, [activeModal, connection.rpcEndpoint, publicKey]);
+
+  // Fetch Metaplex metadata symbols for wallet mints
+  useEffect(() => {
+    let cancelled = false;
+    const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+    const fetchSymbols = async () => {
+      const toFetch = availableWalletMints
+        .map((opt) => opt.mint)
+        .filter((m) => !mintSymbols.has(m));
+      if (toFetch.length === 0) return;
+
+      try {
+        const readEndpoint = getBaseLayerSolanaEndpoint(connection.rpcEndpoint);
+        const readConnection =
+          readEndpoint === connection.rpcEndpoint
+            ? connection
+            : new Connection(readEndpoint, "confirmed");
+
+        const mintKeys = toFetch.map((m) => new PublicKey(m));
+        const metadataPdas = mintKeys.map(
+          (mint) =>
+            PublicKey.findProgramAddressSync(
+              [Buffer.from("metadata"), METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+              METADATA_PROGRAM_ID
+            )[0]
+        );
+
+        const accounts = await readConnection.getMultipleAccountsInfo(metadataPdas);
+        const newSymbols = new Map(mintSymbols);
+
+        mintKeys.forEach((mint, index) => {
+          const account = accounts[index];
+          if (!account) return;
+          try {
+            const [metadata] = Metadata.deserialize(account.data);
+            const symbol =
+              typeof metadata.data.symbol === "string"
+                ? metadata.data.symbol.replace(/\0/g, "").trim()
+                : "";
+            if (symbol) newSymbols.set(mint.toBase58(), symbol);
+          } catch {
+            // no metadata for this mint
+          }
+        });
+
+        if (!cancelled) setMintSymbols(newSymbols);
+      } catch (error) {
+        console.error("[TokenActions] Failed to fetch mint metadata symbols:", error);
+      }
+    };
+
+    void fetchSymbols();
+    return () => { cancelled = true; };
+  }, [availableWalletMints, connection.rpcEndpoint]);
 
   const handleClose = () => {
     setActiveModal(null);
@@ -189,7 +246,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
             </option>
             {availableWalletMints.map((option) => (
               <option key={option.tokenAccount} value={option.mint}>
-                {shortAddress(option.mint, 5)} ({option.balanceLabel})
+                {shortAddress(option.mint, 5)}{mintSymbols.get(option.mint) ? ` (${mintSymbols.get(option.mint)})` : ""} ({option.balanceLabel})
               </option>
             ))}
           </select>
