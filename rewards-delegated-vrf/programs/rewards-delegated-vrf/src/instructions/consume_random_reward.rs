@@ -67,7 +67,7 @@ pub fn consume_random_reward(
                             reward_type,
                             ruleset_pda,
                             amount,
-                            ctx.accounts.vrf_program_identity.to_account_info(),
+                            ctx.accounts.reward_list.to_account_info(),
                             user.clone(),
                         )?;
                         break;

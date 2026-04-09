@@ -10,12 +10,14 @@ import {
   Settings,
   Zap,
   List,
+  Coins,
 } from "lucide-react";
 import { useTransaction } from "@/hooks/useTransaction";
 import { useGlobalTransactionHistory } from "@/hooks/useGlobalTransactionHistory";
 import { useRewardData } from "@/hooks/useRewardData";
 import { PDAs } from "@/lib/pda";
 import { getBaseLayerSolanaEndpoint, getDefaultSolanaEndpoint } from "@/lib/clusterContext";
+import { resolveEndpoint } from "@/lib/endpoints";
 import { Connection } from "@solana/web3.js";
 import { Metadata } from "@metaplex-foundation/mpl-token-metadata";
 import {
@@ -51,16 +53,19 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     removeReward,
     removeRewardsBatch,
     updateReward,
+    sendSponsoredLamportsToRewardList,
   } = useTransaction({ 
     selectedDistributor,
     onTransactionAdd: addTransaction,
     onTransactionUpdate: updateTransaction,
-  });
+    });
 
   // Use selected distributor if available, otherwise use primary (PDA-derived)
   const targetDistributor = selectedDistributor || (publicKey ? PDAs.getRewardDistributor(publicKey)[0] : null);
   const targetDistributorKey = targetDistributor?.toBase58() ?? null;
   const { distributor, rewardList } = useRewardData(publicKey, targetDistributor);
+
+  const rewardListPda = targetDistributor ? PDAs.getRewardList(targetDistributor)[0] : null;
 
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [localStatus, setLocalStatus] = useState({
@@ -90,6 +95,9 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
       drawRangeMax: 0,
       redemptionLimit: 1,
     },
+    fundRewardList: {
+      amountSol: "",
+    },
     removeReward: {
       rewardName: "",
       rewardMint: "",
@@ -108,6 +116,85 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
   const [loadingDistributorMints, setLoadingDistributorMints] = useState(false);
   const [distributorMintFetchError, setDistributorMintFetchError] = useState<string | null>(null);
   const [mintSymbols, setMintSymbols] = useState<Map<string, string>>(new Map());
+
+  // SOL balance of the reward list PDA, fetched from the ER endpoint when the fund modal opens
+  const [rewardListBalance, setRewardListBalance] = useState<{
+    totalLamports: number;
+    rentExemptLamports: number;
+    loading: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (activeModal !== "fundRewardList" || !rewardListPda) {
+      setRewardListBalance(null);
+      return;
+    }
+
+    let cancelled = false;
+    setRewardListBalance({ totalLamports: 0, rentExemptLamports: 0, loading: true });
+
+    const fetchBalance = async () => {
+      try {
+        // If delegated, account lives on the ER; otherwise on the Solana base layer
+        const targetEndpoint = rewardList?.delegated
+          ? resolveEndpoint(connection.rpcEndpoint, "magicblock")
+          : resolveEndpoint(connection.rpcEndpoint, "solana");
+        const targetConnection = new Connection(targetEndpoint, "confirmed");
+
+        // Use getBalance() to avoid superstruct validation errors on ER getAccountInfo responses
+        const lamports = await targetConnection.getBalance(rewardListPda, "confirmed");
+        if (!lamports) {
+          setRewardListBalance({ totalLamports: 0, rentExemptLamports: 0, loading: false });
+          return;
+        }
+
+        // Fetch data size from Solana base layer to compute rent-exempt minimum
+        const solEndpoint = resolveEndpoint(connection.rpcEndpoint, "solana");
+        const solConnection = solEndpoint === targetEndpoint
+          ? targetConnection
+          : new Connection(solEndpoint, "confirmed");
+        const solAccountInfo = await solConnection.getAccountInfo(rewardListPda);
+        const dataLength = solAccountInfo?.data.length ?? 0;
+        const rentExempt = await solConnection.getMinimumBalanceForRentExemption(dataLength);
+
+        if (!cancelled) {
+          setRewardListBalance({
+            totalLamports: lamports,
+            rentExemptLamports: rentExempt,
+            loading: false,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setRewardListBalance({ totalLamports: 0, rentExemptLamports: 0, loading: false });
+        }
+      }
+    };
+
+    void fetchBalance();
+    return () => { cancelled = true; };
+  }, [activeModal, rewardListPda?.toBase58(), connection.rpcEndpoint, rewardList?.delegated]);
+
+  // Auto-fill the suggested top-up amount once the balance resolves
+  useEffect(() => {
+    if (activeModal !== "fundRewardList" || !rewardListBalance || rewardListBalance.loading) return;
+
+    const LAMPORTS_PER_TX = 50_000;
+    const totalRemaining = (rewardList?.rewards ?? []).reduce(
+      (sum: number, r: any) => sum + Math.max(0, Number(r.redemptionLimit) - Number(r.redemptionCount)),
+      0
+    );
+
+    // Lamports needed to cover all remaining redemptions + 20% buffer
+    const neededLamports = Math.ceil(totalRemaining * LAMPORTS_PER_TX * 1.2);
+    const currentExcess = rewardListBalance.totalLamports - rewardListBalance.rentExemptLamports;
+    const deficitLamports = Math.max(0, neededLamports - currentExcess);
+
+    const sol = deficitLamports / 1e9;
+    const suggested = deficitLamports === 0 ? "0" : sol.toFixed(9).replace(/\.?0+$/, "");
+
+    setForms((prev) => ({ ...prev, fundRewardList: { amountSol: suggested } }));
+  }, [activeModal, rewardListBalance]);
 
   interface BatchRewardEntry {
     rewardName: string;
@@ -529,6 +616,24 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
         endpoint: result.endpoint || null,
       });
     }
+  };
+
+  const handleFundRewardList = async () => {
+    if (!rewardListPda) {
+      setValidationError("No distributor selected");
+      return;
+    }
+    const solAmount = parseFloat(forms.fundRewardList.amountSol);
+    if (isNaN(solAmount) || solAmount <= 0) {
+      setValidationError("Enter a valid SOL amount");
+      return;
+    }
+    setLoadingStatus();
+    const lamports = BigInt(Math.floor(solAmount * 1_000_000_000));
+    const result = await sendSponsoredLamportsToRewardList(rewardListPda, lamports);
+    await handleTransactionResult(result, "Fund Reward List (Sponsored Lamports)", () => {
+      setForms((prev) => ({ ...prev, fundRewardList: { amountSol: "" } }));
+    });
   };
 
   const handleInitialize = async () => {
@@ -1105,7 +1210,118 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
             <div className="text-xs text-gray-400">Remove reward from list</div>
           </span>
         </button>
+
+        {/* Fund Reward List */}
+        <button
+          onClick={() => openModal("fundRewardList")}
+          className="card p-4 hover:bg-gray-700 transition flex items-center gap-3 group"
+        >
+          <Coins className="w-5 h-5 text-orange-400 group-hover:text-orange-300" />
+          <span className="text-left">
+            <div className="font-medium text-white">Fund Reward List</div>
+            <div className="text-xs text-gray-400">Send SOL via sponsored lamports transfer</div>
+          </span>
+        </button>
       </div>
+
+      {/* Fund Reward List Modal */}
+      <TransactionModal
+        isOpen={activeModal === "fundRewardList"}
+        title="Fund Reward List"
+        description="Send SOL to the reward list via a sponsored lamports transfer (ephemeral rollup)"
+        loading={localStatus.loading}
+        error={localStatus.error}
+        signature={localStatus.signature}
+        endpoint={localStatus.endpoint || connection.rpcEndpoint}
+        onClose={closeModal}
+        onConfirm={handleFundRewardList}
+      >
+        <div className="space-y-3">
+          {!rewardList?.delegated && (
+            <div className="bg-yellow-900 bg-opacity-30 border border-yellow-700 p-3 rounded text-sm">
+              <p className="text-yellow-300 font-semibold">⚠️ Reward list is not delegated</p>
+              <p className="text-yellow-400 text-xs mt-1">
+                The reward list PDA must be delegated to the ephemeral rollup before you can
+                fund it via a sponsored lamports transfer. Use &ldquo;Delegate Reward List&rdquo; first.
+              </p>
+            </div>
+          )}
+
+          {rewardListPda && (
+            <div className="bg-gray-800 p-2 rounded text-xs">
+              <p className="text-gray-400 mb-1">Destination (Reward List PDA)</p>
+              <CopyableAddress address={rewardListPda.toBase58()} />
+            </div>
+          )}
+
+          {/* SOL balance breakdown from the ER endpoint */}
+          <div className="rounded border border-gray-700 bg-gray-900/60 p-3 text-xs">
+            <p className="text-gray-300 font-medium mb-2">Current Balance (on ER)</p>
+            {rewardListBalance?.loading ? (
+              <p className="text-gray-500 italic">Fetching…</p>
+            ) : rewardListBalance && rewardListBalance.totalLamports > 0 ? (
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Total</span>
+                  <span className="text-white font-mono">
+                    {(rewardListBalance.totalLamports / 1e9).toFixed(9)} SOL
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Rent-free deposit</span>
+                  <span className="text-gray-300 font-mono">
+                    {(rewardListBalance.rentExemptLamports / 1e9).toFixed(9)} SOL
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-gray-700 pt-1 mt-1">
+                  <span className="text-gray-400">Excess (usable for fees)</span>
+                  <span className={`font-mono ${
+                    rewardListBalance.totalLamports - rewardListBalance.rentExemptLamports > 0
+                      ? "text-green-400"
+                      : "text-yellow-400"
+                  }`}>
+                    {((rewardListBalance.totalLamports - rewardListBalance.rentExemptLamports) / 1e9).toFixed(9)} SOL
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-500 italic">Account not found on ER — delegate the reward list first</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-300 mb-2">
+              Amount (SOL)
+            </label>
+            <input
+              type="number"
+              step="0.001"
+              min="0"
+              value={forms.fundRewardList.amountSol}
+              onChange={(e) =>
+                setForms((prev) => ({
+                  ...prev,
+                  fundRewardList: { amountSol: e.target.value },
+                }))
+              }
+              placeholder="e.g. 0.1"
+              disabled={localStatus.loading}
+              className="w-full p-2 bg-gray-700 text-white placeholder-gray-500 rounded border border-gray-600 focus:border-orange-500 focus:outline-none disabled:opacity-50 text-sm"
+            />
+            {forms.fundRewardList.amountSol && !isNaN(parseFloat(forms.fundRewardList.amountSol)) && (
+              <p className="text-xs text-gray-400 mt-1">
+                = {Math.floor(parseFloat(forms.fundRewardList.amountSol) * 1_000_000_000).toLocaleString()} lamports
+              </p>
+            )}
+          </div>
+
+          <div className="bg-gray-800 p-2 rounded text-xs text-gray-400 space-y-1">
+            <p>💡 This calls the e-token program&apos;s <code className="text-orange-300">SponsoredLamportsTransfer</code> instruction.</p>
+            <p>A lamports PDA is created, funded, delegated, and a post-delegation action transfers the SOL to the reward list on the ER.</p>
+            <p className="text-yellow-400">Setup fee: ~0.0003 SOL (sponsored rent, returned after completion)</p>
+          </div>
+        </div>
+      </TransactionModal>
 
       {/* Initialize Modal */}
       <TransactionModal

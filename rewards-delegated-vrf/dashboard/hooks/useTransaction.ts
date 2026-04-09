@@ -1,117 +1,19 @@
 import { useState, useCallback } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
-import {
-  Transaction,
-  PublicKey,
-  TransactionSignature,
-} from "@solana/web3.js";
-import * as anchor from "@coral-xyz/anchor";
-import { PROGRAM_ID } from "@/lib/constants";
-import type { RewardsDelegatedVrf } from "@/idl/rewards_delegated_vrf";
-import rewardsDelegatedVrfIdl from "@/idl/rewards_delegated_vrf.json";
+import { Connection, PublicKey, Transaction, TransactionSignature } from "@solana/web3.js";
 import { PDAs } from "@/lib/pda";
-import { VRF_PROGRAM_ID, ORACLE_QUEUE, SLOT_HASHES_SYSVAR, getVrfProgramIdentity } from "@/lib/vrfConstants";
-import {
-  getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountInstruction,
-  createTransferInstruction,
-  createInitializeMintInstruction,
-  createMintToInstruction,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  getAccount,
-} from "@solana/spl-token";
-import { MAGIC_CONTEXT_ID, MAGIC_PROGRAM_ID } from "@magicblock-labs/ephemeral-rollups-sdk";
-import {
-  createCreateMasterEditionV3Instruction,
-  createCreateMetadataAccountV3Instruction,
-  createSetAndVerifySizedCollectionItemInstruction,
-  createUpdateMetadataAccountV2Instruction,
-} from "@metaplex-foundation/mpl-token-metadata";
+import { resolveEndpoint, type AdminActionEndpointMode } from "@/lib/endpoints";
+import { sendTransaction, sendTransactionWithKeypair } from "@/lib/sendTransaction";
 
-type AdminActionEndpointMode = "solana" | "magicblock";
+// Instruction builders
+import { buildInitializeDistributor, buildSetAdmins, buildSetWhitelist, buildSetRewardList } from "@/lib/instructions/admin";
+import { buildDelegateRewardList, buildUndelegateRewardList } from "@/lib/instructions/delegation";
+import { buildRequestRandomReward, buildAddReward, buildAddRewardsBatch, buildRemoveReward, buildRemoveRewardsBatch, buildUpdateReward, listenForVrfCallback } from "@/lib/instructions/rewards";
+import { buildMintNftCollection, buildMintNftToCollection, buildUpdateNftMetadata } from "@/lib/instructions/nft";
+import { buildSplTokenTransfer } from "@/lib/instructions/tokens";
+import { buildSponsoredLamportsTransfer, checkRewardListDelegated } from "@/lib/instructions/sponsoredLamports";
 
-const SOLANA_DEVNET_ENDPOINT = "https://rpc.magicblock.app/devnet";
-const SOLANA_MAINNET_ENDPOINT = "https://rpc.magicblock.app/mainnet";
-const MAGICBLOCK_DEVNET_ENDPOINT =
-  process.env.NEXT_PUBLIC_EPHEMERAL_PROVIDER_ENDPOINT || "https://devnet-as.magicblock.app/";
-const MAGICBLOCK_MAINNET_ENDPOINT = "https://as.magicblock.app";
-const MAGICBLOCK_DEVNET_US_ENDPOINT = "https://devnet-us.magicblock.app";
-const MAGICBLOCK_MAINNET_US_ENDPOINT = "https://us.magicblock.app";
-const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
-  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-);
-
-function isKnownDevnetEndpoint(endpoint: string): boolean {
-  return endpoint.includes("devnet");
-}
-
-function isKnownMainnetEndpoint(endpoint: string): boolean {
-  return endpoint.includes("mainnet") || endpoint.includes("as.magicblock.app") || endpoint === MAGICBLOCK_MAINNET_US_ENDPOINT;
-}
-
-function isKnownPresetEndpoint(endpoint: string): boolean {
-  return (
-    endpoint === SOLANA_DEVNET_ENDPOINT ||
-    endpoint === SOLANA_MAINNET_ENDPOINT ||
-    endpoint === MAGICBLOCK_DEVNET_ENDPOINT ||
-    endpoint === MAGICBLOCK_MAINNET_ENDPOINT ||
-    endpoint === MAGICBLOCK_DEVNET_US_ENDPOINT ||
-    endpoint === MAGICBLOCK_MAINNET_US_ENDPOINT
-  );
-}
-
-function isMagicBlockEndpoint(endpoint: string): boolean {
-  return (
-    endpoint === MAGICBLOCK_DEVNET_ENDPOINT ||
-    endpoint === MAGICBLOCK_MAINNET_ENDPOINT ||
-    endpoint === MAGICBLOCK_DEVNET_US_ENDPOINT ||
-    endpoint === MAGICBLOCK_MAINNET_US_ENDPOINT
-  );
-}
-
-function isSolanaEndpoint(endpoint: string): boolean {
-  return endpoint === SOLANA_DEVNET_ENDPOINT || endpoint === SOLANA_MAINNET_ENDPOINT;
-}
-
-function resolveAdminActionEndpoint(
-  selectedEndpoint: string,
-  mode: AdminActionEndpointMode
-): string {
-  if (!selectedEndpoint || !isKnownPresetEndpoint(selectedEndpoint)) {
-    return selectedEndpoint;
-  }
-
-  if (mode === "magicblock") {
-    // If already on a MagicBlock endpoint, use it directly
-    if (isMagicBlockEndpoint(selectedEndpoint)) {
-      return selectedEndpoint;
-    }
-    // On a Solana endpoint — pick the default MagicBlock peer for that network
-    if (isKnownDevnetEndpoint(selectedEndpoint)) {
-      return MAGICBLOCK_DEVNET_ENDPOINT;
-    }
-    if (isKnownMainnetEndpoint(selectedEndpoint)) {
-      return MAGICBLOCK_MAINNET_ENDPOINT;
-    }
-  }
-
-  if (mode === "solana") {
-    // If already on a Solana endpoint, use it directly
-    if (isSolanaEndpoint(selectedEndpoint)) {
-      return selectedEndpoint;
-    }
-    // On a MagicBlock endpoint — resolve to the Solana base layer
-    if (isKnownDevnetEndpoint(selectedEndpoint)) {
-      return SOLANA_DEVNET_ENDPOINT;
-    }
-    if (isKnownMainnetEndpoint(selectedEndpoint)) {
-      return SOLANA_MAINNET_ENDPOINT;
-    }
-  }
-
-  return selectedEndpoint;
-}
+export type { TransactionResponse, VrfCallbackData } from "@/lib/instructions/types";
 
 export interface TransactionStatus {
   loading: boolean;
@@ -119,1457 +21,301 @@ export interface TransactionStatus {
   signature: TransactionSignature | null;
 }
 
-export interface VrfCallbackData {
-  signature: string;
-  relevantLogs: string[];
-  txStatus: "confirmed" | "failed" | "pending";
-  error?: string;
-}
-
-export interface TransactionResponse {
-  success: boolean;
-  signature?: TransactionSignature;
-  error?: string;
-  endpoint?: string;
-  callbackPromise?: Promise<VrfCallbackData | null>;
-}
-
-interface UseTransactionProps {
+export interface UseTransactionProps {
   selectedDistributor?: PublicKey | null;
-  onTransactionAdd?: (
-    signature: string,
-    actionName: string,
-    network?: "devnet" | "mainnet-beta",
-    endpoint?: string
-  ) => string; // returns txId
+  onTransactionAdd?: (signature: string, actionName: string, network?: "devnet" | "mainnet-beta", endpoint?: string) => string;
   onTransactionUpdate?: (txId: string, updates: any) => void;
 }
 
 export const useTransaction = (props?: UseTransactionProps) => {
-   const { publicKey, signTransaction } = useWallet();
-   const { connection } = useConnection();
-   const [status, setStatus] = useState<TransactionStatus>({
-     loading: false,
-     error: null,
-     signature: null,
-   });
-  
-  // Use selected distributor if provided, otherwise derive from wallet
-  const getDistributorPda = (wallet: PublicKey) => {
-    if (props?.selectedDistributor) {
-      return props.selectedDistributor;
-    }
-    return PDAs.getRewardDistributor(wallet)[0];
-  };
+  const { publicKey, signTransaction } = useWallet();
+  const { connection } = useConnection();
+  const [status, setStatus] = useState<TransactionStatus>({ loading: false, error: null, signature: null });
 
-  const getActionEndpoint = useCallback(
-    (mode: AdminActionEndpointMode) =>
-      resolveAdminActionEndpoint(connection.rpcEndpoint, mode),
+  const ep = useCallback(
+    (mode: AdminActionEndpointMode) => resolveEndpoint(connection.rpcEndpoint, mode),
     [connection.rpcEndpoint]
   );
 
-  // Helper to create program instance with IDL from local file
-  const createProgram = async (provider: anchor.AnchorProvider): Promise<anchor.Program<RewardsDelegatedVrf>> => {
-    try {
-      const program = new anchor.Program<RewardsDelegatedVrf>(
-        rewardsDelegatedVrfIdl as anchor.Idl,
-        provider
-      );
-      return program;
-    } catch (err) {
-      console.error("Failed to create program:", err);
-      throw err;
-    }
-  };
+  const distributorPda = useCallback(
+    () => props?.selectedDistributor ?? (publicKey ? PDAs.getRewardDistributor(publicKey)[0] : null),
+    [publicKey, props?.selectedDistributor?.toString()]
+  );
 
-
-
-  // Create provider helper
-  const createProvider = (endpointOverride?: string) => {
-    if (!publicKey || !signTransaction) {
-      throw new Error("Wallet not connected");
-    }
-    
-    const wallet = {
-      publicKey,
-      signTransaction: signTransaction.bind({}),
-      signAllTransactions: async (txs: Transaction[]) => {
-        return Promise.all(txs.map(tx => signTransaction!(tx)));
-      },
-    } as unknown as anchor.Wallet;
-    const providerConnection = endpointOverride
-      ? new anchor.web3.Connection(endpointOverride, "confirmed")
-      : connection;
-    return new anchor.AnchorProvider(providerConnection, wallet, { commitment: "confirmed" });
-  };
-
-  // Send transaction helper with verification
-  const sendTransaction = async (
-    tx: Transaction,
-    endpointOverride?: string
-  ): Promise<TransactionResponse> => {
-    if (!publicKey || !signTransaction) {
-      return { success: false, error: "Wallet not connected" };
-    }
-
-    try {
-      const txConnection = endpointOverride
-        ? new anchor.web3.Connection(endpointOverride, "confirmed")
-        : connection;
-      
-      // Set transaction properties
-      tx.feePayer = publicKey;
-      const latestBlockhash = await txConnection.getLatestBlockhash();
-      tx.recentBlockhash = latestBlockhash.blockhash;
-
-      // Sign with wallet adapter
-      const signedTx = await signTransaction(tx);
-      
-      // Send transaction
-      const signature = await txConnection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: true,
-        maxRetries: 3,
-      });
-
-      // Wait for confirmation with timeout
+  /** Sign and send a pre-built transaction, managing loading/error status. */
+  const exec = useCallback(
+    async (
+      buildFn: (connection: Connection) => Promise<Transaction>,
+      endpoint: string
+    ) => {
+      if (!publicKey || !signTransaction) return { success: false, error: "Wallet not connected" };
+      setStatus({ loading: true, error: null, signature: null });
       try {
-        await Promise.race([
-          txConnection.confirmTransaction(signature, "confirmed"),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Transaction confirmation timeout")),
-              60000
-            )
-          ),
-        ]);
-      } catch {
-        // Continue to check status even if confirmation times out
+        const conn = new Connection(endpoint, "confirmed");
+        const tx = await buildFn(conn);
+        const result = await sendTransaction(tx, publicKey, signTransaction, endpoint);
+        setStatus({ loading: false, error: result.error ?? null, signature: result.signature ?? null });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error, signature: null });
+        return { success: false, error };
       }
+    },
+    [publicKey, signTransaction]
+  );
 
-      // Verify transaction actually succeeded
-      try {
-        const txStatus = await txConnection.getSignatureStatus(signature);
-        
-        if (txStatus.value?.err) {
-          // Parse instruction error for better message
-          let errorMessage = JSON.stringify(txStatus.value.err);
-          if (typeof txStatus.value.err === 'object' && 'InstructionError' in txStatus.value.err) {
-            const [index, errContent] = (txStatus.value.err as any).InstructionError;
-            errorMessage = `Instruction ${index} failed: ${JSON.stringify(errContent)}`;
-          }
-          
-          return {
-            success: false,
-            signature,
-            error: errorMessage,
-            endpoint: txConnection.rpcEndpoint,
-          };
-        }
-
-        return { success: true, signature, endpoint: txConnection.rpcEndpoint };
-      } catch {
-        // If we can't get status, but we have signature, return it with unknown error
-        return { 
-          success: false, 
-          signature,
-          error: "Transaction sent but could not verify status. Check explorer for details.",
-          endpoint: txConnection.rpcEndpoint,
-        };
-      }
-    } catch (err) {
-      let errorMessage = "Unknown error";
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (typeof err === 'object' && err !== null) {
-        errorMessage = JSON.stringify(err, null, 2);
-      } else {
-        errorMessage = String(err);
-      }
-      console.error("Transaction error:", errorMessage);
-      return { success: false, error: errorMessage };
-    }
-  };
+  // -------------------------------------------------------------------------
+  // Admin
+  // -------------------------------------------------------------------------
 
   const initializeRewardDistributor = useCallback(
-    async (whitelist: PublicKey[] = []): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-         const actionEndpoint = getActionEndpoint("solana");
-         const provider = createProvider(actionEndpoint);
-         
-         // Create program and build transaction
-         const program = await createProgram(provider);
-         const rewardDistributorPda = getDistributorPda(publicKey);
-
-        const tx = await program.methods
-          .initializeRewardDistributor(whitelist)
-          .accounts({
-            initializer: publicKey,
-            rewardDistributor: rewardDistributorPda,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          } as any)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-
-        if (result.success) {
-          setStatus({ loading: false, error: null, signature: result.signature || null });
-        } else {
-          setStatus({ loading: false, error: result.error || null, signature: null });
-        }
-        return result;
-      } catch (err) {
-        let errorMessage = "Unknown error";
-        if (err instanceof Error) {
-          errorMessage = err.message;
-        } else if (typeof err === 'object' && err !== null) {
-          errorMessage = JSON.stringify(err, null, 2);
-        } else {
-          errorMessage = String(err);
-        }
-        console.error("Initialize reward distributor error:", errorMessage);
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-      }
-      },
-      [publicKey, signTransaction, connection, getActionEndpoint]
-      );
+    (whitelist: PublicKey[] = []) => {
+      const endpoint = ep("solana");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildInitializeDistributor(conn, publicKey, dist, whitelist), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
   const setAdmins = useCallback(
-    async (newAdmins: PublicKey[]): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      
-      setStatus({ loading: true, error: null, signature: null });
+    (newAdmins: PublicKey[]) => {
+      const endpoint = ep("solana");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildSetAdmins(conn, publicKey, dist, newAdmins), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
-      try {
-        const actionEndpoint = getActionEndpoint("solana");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
+  const setWhitelist = useCallback(
+    (newWhitelist: PublicKey[]) => {
+      const endpoint = ep("solana");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildSetWhitelist(conn, publicKey, dist, newWhitelist), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
-        const tx = await program.methods
-          .setAdmins(newAdmins)
-          .accounts({
-            admin: publicKey,
-            rewardDistributor: rewardDistributorPda,
-          } as any)
-          .transaction();
+  const setRewardList = useCallback(
+    (globalRangeMin: number | null, globalRangeMax: number | null, startTimestamp: number | null, endTimestamp: number | null) => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildSetRewardList(conn, publicKey, dist, globalRangeMin, globalRangeMax, startTimestamp, endTimestamp), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({ 
-          loading: false, 
-          error: result.error || null, 
-          signature: result.signature || null 
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-        }
-        },
-        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
-        );
+  // -------------------------------------------------------------------------
+  // Delegation
+  // -------------------------------------------------------------------------
 
-        const setWhitelist = useCallback(
-    async (newWhitelist: PublicKey[]): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      
-      setStatus({ loading: true, error: null, signature: null });
+  const delegateRewardList = useCallback(
+    (validator?: PublicKey) => {
+      const endpoint = ep("solana");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildDelegateRewardList(conn, publicKey, dist, validator), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
-      try {
-        const actionEndpoint = getActionEndpoint("solana");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
+  const undelegateRewardList = useCallback(
+    () => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildUndelegateRewardList(conn, publicKey, dist), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
-        const tx = await program.methods
-          .setWhitelist(newWhitelist)
-          .accounts({
-            admin: publicKey,
-            rewardDistributor: rewardDistributorPda,
-          } as any)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({ 
-          loading: false, 
-          error: result.error || null, 
-          signature: result.signature || null 
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-        }
-        },
-        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
-        );
-
-        const setRewardList = useCallback(
-    async (
-      globalRangeMin: number | null,
-      globalRangeMax: number | null,
-      startTimestamp: number | null,
-      endTimestamp: number | null
-    ): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-
-        const tx = await program.methods
-          .setRewardList(
-            typeof startTimestamp === "number" && startTimestamp > 0
-              ? new anchor.BN(startTimestamp)
-              : null,
-            typeof endTimestamp === "number" && endTimestamp > 0
-              ? new anchor.BN(endTimestamp)
-              : null,
-            typeof globalRangeMin === "number" && Number.isFinite(globalRangeMin)
-              ? globalRangeMin
-              : null,
-            typeof globalRangeMax === "number" && Number.isFinite(globalRangeMax)
-              ? globalRangeMax
-              : null
-          )
-          .accounts({
-            admin: publicKey,
-            rewardDistributor: rewardDistributorPda,
-            rewardList: rewardListPda,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          } as any)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({ 
-          loading: false, 
-          error: result.error || null, 
-          signature: result.signature || null 
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-        }
-        },
-        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
-        );
-
-        const delegateRewardList = useCallback(async (validator?: PublicKey): Promise<TransactionResponse> => {
-    if (!publicKey) return { success: false, error: "Wallet not connected" };
-
-    setStatus({ loading: true, error: null, signature: null });
-
-    try {
-      const actionEndpoint = getActionEndpoint("solana");
-      const provider = createProvider(actionEndpoint);
-      const program = await createProgram(provider);
-      const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-      const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-
-      let txBuilder = program.methods
-        .delegateRewardList()
-        .accounts({
-          admin: publicKey,
-          rewardDistributor: rewardDistributorPda,
-          rewardList: rewardListPda,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        } as any);
-
-      if (validator) {
-        txBuilder = txBuilder.remainingAccounts([
-          { pubkey: validator, isSigner: false, isWritable: false },
-        ]);
-      }
-
-      const tx = await txBuilder.transaction();
-
-      const result = await sendTransaction(tx, actionEndpoint);
-      setStatus({
-        loading: false,
-        error: result.error || null,
-        signature: result.signature || null
-      });
-      return result;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      setStatus({ loading: false, error: errorMessage, signature: null });
-      return { success: false, error: errorMessage };
-      }
-      }, [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]);
-
-      const undelegateRewardList = useCallback(
-    async (): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-
-        const tx = await program.methods
-          .undelegateRewardList()
-          .accounts({
-            payer: publicKey,
-            rewardDistributor: rewardDistributorPda,
-            rewardList: rewardListPda,
-          } as any)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({ 
-          loading: false, 
-          error: result.error || null, 
-          signature: result.signature || null 
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-        }
-        },
-        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
-        );
+  // -------------------------------------------------------------------------
+  // Rewards
+  // -------------------------------------------------------------------------
 
   const requestRandomReward = useCallback(
-    async (user: PublicKey, clientSeed: number): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
+    async (user: PublicKey, clientSeed: number) => {
+      if (!publicKey || !signTransaction) return { success: false, error: "Wallet not connected" };
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!dist) return { success: false, error: "No distributor" };
 
       setStatus({ loading: true, error: null, signature: null });
-
       try {
-         const actionEndpoint = getActionEndpoint("magicblock");
-         const provider = createProvider(actionEndpoint);
-         const program = await createProgram(provider);
-         const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-         const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-         const [transferLookupTablePda] = PDAs.getTransferLookupTable();
-         const programIdentity = getVrfProgramIdentity();
-
-         const tx = await program.methods
-           .requestRandomReward(clientSeed)
-           .accounts({
-             user,
-             admin: publicKey,
-             rewardDistributor: rewardDistributorPda,
-             rewardList: rewardListPda,
-             transferLookupTable: transferLookupTablePda,
-             oracleQueue: ORACLE_QUEUE,
-             programIdentity,
-             vrfProgram: VRF_PROGRAM_ID,
-             slotHashes: SLOT_HASHES_SYSVAR,
-             systemProgram: anchor.web3.SystemProgram.programId,
-           } as any)
-           .transaction();
-
-         // Set up VRF callback listener BEFORE sending the request to avoid race condition.
-         // Returns callback data via a promise so the caller can add it to history
-         // after the request entry (correct ordering).
-         let callbackListener: number | null = null;
-         let callbackListenerRemoved = false;
-         let callbackTimeoutId: ReturnType<typeof setTimeout> | null = null;
-
-         const callbackPromise = new Promise<VrfCallbackData | null>((resolve) => {
-           callbackTimeoutId = setTimeout(() => {
-             if (callbackListener !== null && !callbackListenerRemoved) {
-               provider.connection.removeOnLogsListener(callbackListener);
-               callbackListenerRemoved = true;
-             }
-             resolve(null);
-           }, 30000);
-
-           try {
-             callbackListener = provider.connection.onLogs(
-               PROGRAM_ID,
-               (logs) => {
-                 try {
-                   const relevantLogs = logs.logs.filter(
-                     (log) =>
-                       log.includes("Random result:") ||
-                       log.includes("Won reward") ||
-                       log.includes("exhausted") ||
-                       log.includes("Reward:")
-                   );
-
-                   if (relevantLogs.length > 0) {
-                     if (callbackListener !== null && !callbackListenerRemoved) {
-                       provider.connection.removeOnLogsListener(callbackListener);
-                       callbackListenerRemoved = true;
-                     }
-                     if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
-                     resolve({
-                       signature: logs.signature,
-                       relevantLogs,
-                       txStatus: logs.err ? "failed" : "confirmed",
-                       error: logs.err ? JSON.stringify(logs.err) : undefined,
-                     });
-                   }
-                 } catch {
-                   if (callbackListener !== null && !callbackListenerRemoved) {
-                     provider.connection.removeOnLogsListener(callbackListener);
-                     callbackListenerRemoved = true;
-                   }
-                   if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
-                   resolve(null);
-                 }
-               },
-               "confirmed"
-             );
-           } catch {
-             if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
-             resolve(null);
-           }
-         });
-
-         // Send the request
-         const result = await sendTransaction(tx, actionEndpoint);
-         setStatus({
-           loading: false,
-           error: result.error || null,
-           signature: result.signature || null
-         });
-
-         // Clean up listener if request failed
-         if (!result.success) {
-           if (callbackListener !== null && !callbackListenerRemoved) {
-             provider.connection.removeOnLogsListener(callbackListener);
-             callbackListenerRemoved = true;
-           }
-           if (callbackTimeoutId) clearTimeout(callbackTimeoutId);
-         }
-
-         return { ...result, callbackPromise };
-       } catch (err) {
-         const errorMessage = err instanceof Error ? err.message : "Unknown error";
-         console.error("Request random reward error:", err);
-         setStatus({ loading: false, error: errorMessage, signature: null });
-         return { success: false, error: errorMessage };
-       }
+        const conn = new Connection(endpoint, "confirmed");
+        // Subscribe before sending to avoid race condition
+        const { callbackPromise, cancel } = listenForVrfCallback(conn);
+        const tx = await buildRequestRandomReward(conn, publicKey, dist, user, clientSeed);
+        const result = await sendTransaction(tx, publicKey, signTransaction, endpoint);
+        setStatus({ loading: false, error: result.error ?? null, signature: result.signature ?? null });
+        if (!result.success) cancel();
+        return { ...result, callbackPromise };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error, signature: null });
+        return { success: false, error };
+      }
     },
-    [publicKey, signTransaction, connection, getActionEndpoint, props]
+    [publicKey, signTransaction, ep, distributorPda]
   );
 
   const addReward = useCallback(
-    async (
-      rewardName: string,
-      rewardMint: PublicKey,
-      tokenAccount: PublicKey,
-      rewardAmount?: number,
-      drawRangeMin?: number,
-      drawRangeMax?: number,
-      redemptionLimit?: number,
-      metadataAccount?: PublicKey
-    ): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-
-        const accounts: any = {
-          admin: publicKey,
-          rewardDistributor: rewardDistributorPda,
-          rewardList: rewardListPda,
-          mint: rewardMint,
-          tokenAccount,
-          metadata: metadataAccount ?? null,
-        };
- 
-        const tx = await program.methods
-          .addReward(
-            rewardName,
-            rewardAmount ? new anchor.BN(rewardAmount) : null,
-            drawRangeMin || null,
-            drawRangeMax || null,
-            redemptionLimit ? new anchor.BN(redemptionLimit) : null,
-          )
-          .accounts(accounts)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({ 
-          loading: false, 
-          error: result.error || null, 
-          signature: result.signature || null 
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-        }
-        },
-        [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
-        );
+    (rewardName: string, rewardMint: PublicKey, tokenAccount: PublicKey, rewardAmount?: number, drawRangeMin?: number, drawRangeMax?: number, redemptionLimit?: number, metadataAccount?: PublicKey) => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildAddReward(conn, publicKey, dist, rewardName, rewardMint, tokenAccount, rewardAmount, drawRangeMin, drawRangeMax, redemptionLimit, metadataAccount), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
 
   const addRewardsBatch = useCallback(
-    async (
-      rewards: Array<{
-        rewardName: string;
-        rewardMint: PublicKey;
-        tokenAccount: PublicKey;
-        rewardAmount?: number;
-        drawRangeMin?: number;
-        drawRangeMax?: number;
-        redemptionLimit?: number;
-        metadataAccount?: PublicKey;
-      }>
-    ): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      if (rewards.length === 0) return { success: false, error: "No rewards to add" };
-
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-
-        const tx = new anchor.web3.Transaction();
-
-        for (const reward of rewards) {
-          const ix = await program.methods
-            .addReward(
-              reward.rewardName,
-              reward.rewardAmount ? new anchor.BN(reward.rewardAmount) : null,
-              reward.drawRangeMin || null,
-              reward.drawRangeMax || null,
-              reward.redemptionLimit ? new anchor.BN(reward.redemptionLimit) : null,
-            )
-            .accounts({
-              admin: publicKey,
-              rewardDistributor: rewardDistributorPda,
-              rewardList: rewardListPda,
-              mint: reward.rewardMint,
-              tokenAccount: reward.tokenAccount,
-              metadata: reward.metadataAccount ?? null,
-            } as any)
-            .instruction();
-
-          tx.add(ix);
-        }
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({
-          loading: false,
-          error: result.error || null,
-          signature: result.signature || null,
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-      }
+    (rewards: Parameters<typeof buildAddRewardsBatch>[3]) => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildAddRewardsBatch(conn, publicKey, dist, rewards), endpoint);
     },
-    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
+    [publicKey, ep, distributorPda, exec]
   );
 
   const removeReward = useCallback(
-    async (rewardName: string, rewardMint?: PublicKey, redemptionAmount?: number): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-        const [transferLookupTablePda] = PDAs.getTransferLookupTable();
-
-        const accounts: any = {
-          admin: publicKey,
-          rewardDistributor: rewardDistributorPda,
-          rewardList: rewardListPda,
-          transferLookupTable: transferLookupTablePda,
-          destination: publicKey,
-          magicProgram: MAGIC_PROGRAM_ID,
-          magicContext: MAGIC_CONTEXT_ID
-        };
-
-        const tx = await program.methods
-          .removeReward(rewardName, rewardMint || null, redemptionAmount ? new anchor.BN(redemptionAmount) : null)
-          .accounts(accounts)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({ 
-          loading: false, 
-          error: result.error || null, 
-          signature: result.signature || null 
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-      }
+    (rewardName: string, rewardMint?: PublicKey, redemptionAmount?: number) => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildRemoveReward(conn, publicKey, dist, rewardName, rewardMint, redemptionAmount), endpoint);
     },
-    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
+    [publicKey, ep, distributorPda, exec]
   );
 
   const removeRewardsBatch = useCallback(
-    async (
-      items: Array<{
-        rewardName: string;
-        rewardMint?: PublicKey;
-        redemptionAmount?: number;
-      }>
-    ): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      if (items.length === 0) return { success: false, error: "No rewards to remove" };
-
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-        const [transferLookupTablePda] = PDAs.getTransferLookupTable();
-
-        const tx = new anchor.web3.Transaction();
-
-        for (const item of items) {
-          const ix = await program.methods
-            .removeReward(
-              item.rewardName,
-              item.rewardMint || null,
-              item.redemptionAmount ? new anchor.BN(item.redemptionAmount) : null
-            )
-            .accounts({
-              admin: publicKey,
-              rewardDistributor: rewardDistributorPda,
-              rewardList: rewardListPda,
-              transferLookupTable: transferLookupTablePda,
-              destination: publicKey,
-              magicProgram: MAGIC_PROGRAM_ID,
-              magicContext: MAGIC_CONTEXT_ID,
-            } as any)
-            .instruction();
-
-          tx.add(ix);
-        }
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({
-          loading: false,
-          error: result.error || null,
-          signature: result.signature || null,
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-      }
+    (items: Parameters<typeof buildRemoveRewardsBatch>[3]) => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildRemoveRewardsBatch(conn, publicKey, dist, items), endpoint);
     },
-    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
+    [publicKey, ep, distributorPda, exec]
   );
 
   const updateReward = useCallback(
-    async (
-      currentRewardName: string,
-      updatedRewardName: string | null,
-      rewardMint: PublicKey | null,
-      tokenAccount: PublicKey | null,
-      rewardAmount: number | null,
-      drawRangeMin: number | null,
-      drawRangeMax: number | null
-    ): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-      setStatus({ loading: true, error: null, signature: null });
-
-      try {
-        const actionEndpoint = getActionEndpoint("magicblock");
-        const provider = createProvider(actionEndpoint);
-        const program = await createProgram(provider);
-        const rewardDistributorPda = props?.selectedDistributor || getDistributorPda(publicKey);
-        const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
-        const accounts: any = {
-          admin: publicKey,
-          rewardDistributor: rewardDistributorPda,
-          rewardList: rewardListPda,
-        };
-        if (rewardMint) {
-          accounts.mint = rewardMint;
-        }
-        if (tokenAccount) {
-          accounts.tokenAccount = tokenAccount;
-        }
-
-        const tx = await program.methods
-          .updateReward(
-            currentRewardName,
-            updatedRewardName,
-            rewardAmount != null ? new anchor.BN(rewardAmount) : null,
-            drawRangeMin,
-            drawRangeMax
-          )
-          .accounts(accounts)
-          .transaction();
-
-        const result = await sendTransaction(tx, actionEndpoint);
-        setStatus({
-          loading: false,
-          error: result.error || null,
-          signature: result.signature || null,
-        });
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
-      }
+    (currentRewardName: string, updatedRewardName: string | null, rewardMint: PublicKey | null, tokenAccount: PublicKey | null, rewardAmount: number | null, drawRangeMin: number | null, drawRangeMax: number | null) => {
+      const endpoint = ep("magicblock");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildUpdateReward(conn, publicKey, dist, currentRewardName, updatedRewardName, rewardMint, tokenAccount, rewardAmount, drawRangeMin, drawRangeMax), endpoint);
     },
-    [publicKey, signTransaction, connection, getActionEndpoint, props?.selectedDistributor?.toString()]
+    [publicKey, ep, distributorPda, exec]
   );
 
+  // -------------------------------------------------------------------------
+  // NFTs (need mintKeypair partial signing)
+  // -------------------------------------------------------------------------
+
   const mintNftCollection = useCallback(
-    async (
-      name: string,
-      symbol: string,
-      uri: string,
-      _decimals: number = 0
-    ): Promise<TransactionResponse & { mint?: PublicKey }> => {
-      if (!publicKey || !signTransaction) {
-        return { success: false, error: "Wallet not connected" };
-      }
-
+    async (name: string, symbol: string, uri: string) => {
+      if (!publicKey || !signTransaction) return { success: false, error: "Wallet not connected" };
+      if (!name.trim() || !symbol.trim() || !uri.trim()) return { success: false, error: "Name, symbol, and URI are required" };
+      setStatus({ loading: true, error: null, signature: null });
       try {
-        const actionEndpoint = getActionEndpoint("solana");
-        const txConnection =
-          actionEndpoint && actionEndpoint !== connection.rpcEndpoint
-            ? new anchor.web3.Connection(actionEndpoint, "confirmed")
-            : connection;
-
-        const trimmedName = name.trim();
-        const trimmedSymbol = symbol.trim();
-        const trimmedUri = uri.trim();
-
-        if (!trimmedName || !trimmedSymbol || !trimmedUri) {
-          throw new Error("Collection name, symbol, and URI are required");
-        }
-
-        const mintKeypair = anchor.web3.Keypair.generate();
-        const mintRent = await txConnection.getMinimumBalanceForRentExemption(82);
-        const ownerTokenAccount = getAssociatedTokenAddressSync(
-          mintKeypair.publicKey,
-          publicKey
-        );
-        const [metadataAddress] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("metadata"),
-            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-            mintKeypair.publicKey.toBuffer(),
-          ],
-          TOKEN_METADATA_PROGRAM_ID
-        );
-        const [masterEditionAddress] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("metadata"),
-            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-            mintKeypair.publicKey.toBuffer(),
-            Buffer.from("edition"),
-          ],
-          TOKEN_METADATA_PROGRAM_ID
-        );
-
-        setStatus({ loading: true, error: null, signature: null });
-
-        const transaction = new anchor.web3.Transaction()
-          .add(
-            anchor.web3.SystemProgram.createAccount({
-              fromPubkey: publicKey,
-              newAccountPubkey: mintKeypair.publicKey,
-              space: 82,
-              lamports: mintRent,
-              programId: TOKEN_PROGRAM_ID,
-            })
-          )
-          .add(
-            createInitializeMintInstruction(
-              mintKeypair.publicKey,
-              0,
-              publicKey,
-              publicKey,
-              TOKEN_PROGRAM_ID
-            )
-          )
-          .add(
-            createAssociatedTokenAccountInstruction(
-              publicKey,
-              ownerTokenAccount,
-              publicKey,
-              mintKeypair.publicKey,
-              TOKEN_PROGRAM_ID,
-              ASSOCIATED_TOKEN_PROGRAM_ID
-            )
-          )
-          .add(
-            createMintToInstruction(
-              mintKeypair.publicKey,
-              ownerTokenAccount,
-              publicKey,
-              1,
-              [],
-              TOKEN_PROGRAM_ID
-            )
-          )
-          .add(
-            createCreateMetadataAccountV3Instruction(
-              {
-                metadata: metadataAddress,
-                mint: mintKeypair.publicKey,
-                mintAuthority: publicKey,
-                payer: publicKey,
-                updateAuthority: publicKey,
-                systemProgram: anchor.web3.SystemProgram.programId,
-                rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-              },
-              {
-                createMetadataAccountArgsV3: {
-                  data: {
-                    name: trimmedName,
-                    symbol: trimmedSymbol,
-                    uri: trimmedUri,
-                    sellerFeeBasisPoints: 0,
-                    creators: [
-                      {
-                        address: publicKey,
-                        verified: true,
-                        share: 100,
-                      },
-                    ],
-                    collection: null,
-                    uses: null,
-                  },
-                  isMutable: true,
-                  collectionDetails: { __kind: "V1", size: new anchor.BN(0) },
-                },
-              }
-            )
-          )
-          .add(
-            createCreateMasterEditionV3Instruction(
-              {
-                edition: masterEditionAddress,
-                metadata: metadataAddress,
-                mint: mintKeypair.publicKey,
-                mintAuthority: publicKey,
-                payer: publicKey,
-                updateAuthority: publicKey,
-                systemProgram: anchor.web3.SystemProgram.programId,
-                tokenProgram: TOKEN_PROGRAM_ID,
-                rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-              },
-              {
-                createMasterEditionArgs: {
-                  maxSupply: new anchor.BN(0),
-                },
-              }
-            )
-          );
-
-        transaction.feePayer = publicKey;
-        transaction.recentBlockhash = (
-          await txConnection.getLatestBlockhash()
-        ).blockhash;
-        transaction.partialSign(mintKeypair);
-
-        const signedTx = await signTransaction(transaction);
-
-        const signature = await txConnection.sendRawTransaction(signedTx.serialize(), {
-          skipPreflight: true,
-          maxRetries: 3,
-        });
-
-        await txConnection.confirmTransaction(signature, "confirmed");
-
-        setStatus({
-          loading: false,
-          error: null,
-          signature,
-        });
-
-        return {
-          success: true,
-          signature,
-          mint: mintKeypair.publicKey,
-          endpoint: txConnection.rpcEndpoint,
-        };
+        const endpoint = ep("solana");
+        const conn = new Connection(endpoint, "confirmed");
+        const { tx, mintKeypair } = await buildMintNftCollection(conn, publicKey, name.trim(), symbol.trim(), uri.trim());
+        const result = await sendTransactionWithKeypair(tx, publicKey, signTransaction, endpoint, [mintKeypair]);
+        setStatus({ loading: false, error: result.error ?? null, signature: result.signature ?? null });
+        return { ...result, mint: mintKeypair.publicKey };
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "Unknown error occurred";
-
-        setStatus({
-          loading: false,
-          error: errorMessage,
-          signature: null,
-        });
-
-        return {
-          success: false,
-          error: errorMessage,
-        };
+        const error = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error, signature: null });
+        return { success: false, error };
       }
     },
-    [publicKey, connection, signTransaction, getActionEndpoint]
+    [publicKey, signTransaction, ep]
   );
 
   const mintNftToCollection = useCallback(
-    async (
-      collectionMint: PublicKey,
-      name: string,
-      symbol: string,
-      uri: string
-    ): Promise<TransactionResponse & { mint?: PublicKey }> => {
-      if (!publicKey || !signTransaction) {
-        return { success: false, error: "Wallet not connected" };
-      }
-
-      try {
-        const actionEndpoint = getActionEndpoint("solana");
-        const txConnection =
-          actionEndpoint && actionEndpoint !== connection.rpcEndpoint
-            ? new anchor.web3.Connection(actionEndpoint, "confirmed")
-            : connection;
-
-        const trimmedName = name.trim();
-        const trimmedSymbol = symbol.trim();
-        const trimmedUri = uri.trim();
-
-        if (!trimmedName || !trimmedSymbol || !trimmedUri) {
-          throw new Error("Collection mint, NFT name, symbol, and URI are required");
-        }
-
-        const mintKeypair = anchor.web3.Keypair.generate();
-        const mintRent = await txConnection.getMinimumBalanceForRentExemption(82);
-        const ownerTokenAccount = getAssociatedTokenAddressSync(
-          mintKeypair.publicKey,
-          publicKey
-        );
-        const [metadataAddress] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("metadata"),
-            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-            mintKeypair.publicKey.toBuffer(),
-          ],
-          TOKEN_METADATA_PROGRAM_ID
-        );
-        const [masterEditionAddress] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("metadata"),
-            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-            mintKeypair.publicKey.toBuffer(),
-            Buffer.from("edition"),
-          ],
-          TOKEN_METADATA_PROGRAM_ID
-        );
-        const [collectionMetadataAddress] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("metadata"),
-            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-            collectionMint.toBuffer(),
-          ],
-          TOKEN_METADATA_PROGRAM_ID
-        );
-
-        setStatus({ loading: true, error: null, signature: null });
-
-        const transaction = new anchor.web3.Transaction()
-          .add(
-            anchor.web3.SystemProgram.createAccount({
-              fromPubkey: publicKey,
-              newAccountPubkey: mintKeypair.publicKey,
-              space: 82,
-              lamports: mintRent,
-              programId: TOKEN_PROGRAM_ID,
-            })
-          )
-          .add(
-            createInitializeMintInstruction(
-              mintKeypair.publicKey,
-              0,
-              publicKey,
-              publicKey,
-              TOKEN_PROGRAM_ID
-            )
-          )
-          .add(
-            createAssociatedTokenAccountInstruction(
-              publicKey,
-              ownerTokenAccount,
-              publicKey,
-              mintKeypair.publicKey,
-              TOKEN_PROGRAM_ID,
-              ASSOCIATED_TOKEN_PROGRAM_ID
-            )
-          )
-          .add(
-            createMintToInstruction(
-              mintKeypair.publicKey,
-              ownerTokenAccount,
-              publicKey,
-              1,
-              [],
-              TOKEN_PROGRAM_ID
-            )
-          )
-          .add(
-            createCreateMetadataAccountV3Instruction(
-              {
-                metadata: metadataAddress,
-                mint: mintKeypair.publicKey,
-                mintAuthority: publicKey,
-                payer: publicKey,
-                updateAuthority: publicKey,
-                systemProgram: anchor.web3.SystemProgram.programId,
-                rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-              },
-              {
-                createMetadataAccountArgsV3: {
-                  data: {
-                    name: trimmedName,
-                    symbol: trimmedSymbol,
-                    uri: trimmedUri,
-                    sellerFeeBasisPoints: 0,
-                    creators: [
-                      {
-                        address: publicKey,
-                        verified: true,
-                        share: 100,
-                      },
-                    ],
-                    collection: {
-                      key: collectionMint,
-                      verified: false,
-                    },
-                    uses: null,
-                  },
-                  isMutable: true,
-                  collectionDetails: null,
-                },
-              }
-            )
-          )
-          .add(
-            createCreateMasterEditionV3Instruction(
-              {
-                edition: masterEditionAddress,
-                metadata: metadataAddress,
-                mint: mintKeypair.publicKey,
-                mintAuthority: publicKey,
-                payer: publicKey,
-                updateAuthority: publicKey,
-                systemProgram: anchor.web3.SystemProgram.programId,
-                tokenProgram: TOKEN_PROGRAM_ID,
-                rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-              },
-              {
-                createMasterEditionArgs: {
-                  maxSupply: null,
-                },
-              }
-            )
-          )
-          .add(
-            createSetAndVerifySizedCollectionItemInstruction({
-              metadata: metadataAddress,
-              collectionAuthority: publicKey,
-              payer: publicKey,
-              updateAuthority: publicKey,
-              collectionMint,
-              collection: collectionMetadataAddress,
-              collectionMasterEditionAccount: PublicKey.findProgramAddressSync(
-                [
-                  Buffer.from("metadata"),
-                  TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-                  collectionMint.toBuffer(),
-                  Buffer.from("edition"),
-                ],
-                TOKEN_METADATA_PROGRAM_ID
-              )[0],
-            } as any)
-          );
-
-        transaction.feePayer = publicKey;
-        transaction.recentBlockhash = (
-          await txConnection.getLatestBlockhash()
-        ).blockhash;
-        transaction.partialSign(mintKeypair);
-
-        const signedTx = await signTransaction(transaction);
-        const signature = await txConnection.sendRawTransaction(signedTx.serialize(), {
-          skipPreflight: true,
-          maxRetries: 3,
-        });
-
-        await txConnection.confirmTransaction(signature, "confirmed");
-
-        setStatus({
-          loading: false,
-          error: null,
-          signature,
-        });
-
-        return {
-          success: true,
-          signature,
-          mint: mintKeypair.publicKey,
-          endpoint: txConnection.rpcEndpoint,
-        };
-      } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "Unknown error occurred";
-
-        setStatus({
-          loading: false,
-          error: errorMessage,
-          signature: null,
-        });
-
-        return {
-          success: false,
-          error: errorMessage,
-        };
-      }
-    },
-    [publicKey, connection, signTransaction, getActionEndpoint]
-  );
-
-  const sendSplTokenToDistributor = useCallback(
-    async (
-      tokenMint: PublicKey,
-      amount: number,
-      decimals: number
-    ): Promise<TransactionResponse> => {
-      if (!publicKey) return { success: false, error: "Wallet not connected" };
-
+    async (collectionMint: PublicKey, name: string, symbol: string, uri: string) => {
+      if (!publicKey || !signTransaction) return { success: false, error: "Wallet not connected" };
+      if (!name.trim() || !symbol.trim() || !uri.trim()) return { success: false, error: "Name, symbol, and URI are required" };
       setStatus({ loading: true, error: null, signature: null });
-
       try {
-        const actionEndpoint = getActionEndpoint("solana");
-        const txConnection =
-          actionEndpoint && actionEndpoint !== connection.rpcEndpoint
-            ? new anchor.web3.Connection(actionEndpoint, "confirmed")
-            : connection;
-        const rewardDistributorPda =
-          props?.selectedDistributor || getDistributorPda(publicKey);
-        
-        // Get or create associated token accounts
-        const userTokenAccount = getAssociatedTokenAddressSync(
-          tokenMint,
-          publicKey
-        );
-        
-        const distributorTokenAccount = getAssociatedTokenAddressSync(
-          tokenMint,
-          rewardDistributorPda,
-          true // allowOffCurve for PDAs
-        );
-
-        const tx = new anchor.web3.Transaction();
-
-        // Check if distributor token account exists, if not create it
-        try {
-          await getAccount(txConnection, distributorTokenAccount);
-        } catch {
-          tx.add(
-            createAssociatedTokenAccountInstruction(
-              publicKey,
-              distributorTokenAccount,
-              rewardDistributorPda,
-              tokenMint,
-              TOKEN_PROGRAM_ID,
-              ASSOCIATED_TOKEN_PROGRAM_ID
-            )
-          );
-        }
-
-        // Add SPL token transfer instruction
-        const tokenAmount = Math.floor(amount * Math.pow(10, decimals));
-        
-        tx.add(
-          createTransferInstruction(
-            userTokenAccount,
-            distributorTokenAccount,
-            publicKey,
-            tokenAmount,
-            [],
-            TOKEN_PROGRAM_ID
-          )
-        );
-
-        tx.feePayer = publicKey;
-        tx.recentBlockhash = (
-          await txConnection.getLatestBlockhash()
-        ).blockhash;
-
-        if (!signTransaction) {
-          throw new Error("Wallet does not support signing transactions");
-        }
-
-        const signedTx = await signTransaction(tx);
-        const signature = await txConnection.sendRawTransaction(signedTx.serialize(), {
-          skipPreflight: true,
-          maxRetries: 3,
-        });
-
-        await txConnection.confirmTransaction(signature, "confirmed");
-
-        setStatus({
-          loading: false,
-          error: null,
-          signature,
-        });
-
-        return {
-          success: true,
-          signature,
-          endpoint: txConnection.rpcEndpoint,
-        };
+        const endpoint = ep("solana");
+        const conn = new Connection(endpoint, "confirmed");
+        const { tx, mintKeypair } = await buildMintNftToCollection(conn, publicKey, collectionMint, name.trim(), symbol.trim(), uri.trim());
+        const result = await sendTransactionWithKeypair(tx, publicKey, signTransaction, endpoint, [mintKeypair]);
+        setStatus({ loading: false, error: result.error ?? null, signature: result.signature ?? null });
+        return { ...result, mint: mintKeypair.publicKey };
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "Unknown error occurred";
-
-        setStatus({
-          loading: false,
-          error: errorMessage,
-          signature: null,
-        });
-
-        return {
-          success: false,
-          error: errorMessage,
-          endpoint: getActionEndpoint("solana"),
-        };
+        const error = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error, signature: null });
+        return { success: false, error };
       }
     },
-    [publicKey, connection, signTransaction, getActionEndpoint, props?.selectedDistributor]
+    [publicKey, signTransaction, ep]
   );
 
   const updateNftMetadata = useCallback(
-    async (
-      mint: PublicKey,
-      name: string,
-      symbol: string,
-      uri: string
-    ): Promise<TransactionResponse> => {
-      if (!publicKey || !signTransaction) {
-        return { success: false, error: "Wallet not connected" };
-      }
+    (mint: PublicKey, name: string, symbol: string, uri: string) => {
+      const endpoint = ep("solana");
+      if (!publicKey) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      if (!name.trim() || !symbol.trim() || !uri.trim()) return Promise.resolve({ success: false, error: "Name, symbol, and URI are required" });
+      return exec(() => Promise.resolve(buildUpdateNftMetadata(publicKey, mint, name.trim(), symbol.trim(), uri.trim())), endpoint);
+    },
+    [publicKey, ep, exec]
+  );
 
+  // -------------------------------------------------------------------------
+  // SPL Token transfer
+  // -------------------------------------------------------------------------
+
+  const sendSplTokenToDistributor = useCallback(
+    (tokenMint: PublicKey, amount: number, decimals: number) => {
+      const endpoint = ep("solana");
+      const dist = distributorPda();
+      if (!publicKey || !dist) return Promise.resolve({ success: false, error: "Wallet not connected" });
+      return exec((conn) => buildSplTokenTransfer(conn, publicKey, dist, tokenMint, amount, decimals), endpoint);
+    },
+    [publicKey, ep, distributorPda, exec]
+  );
+
+  // -------------------------------------------------------------------------
+  // Sponsored lamports transfer
+  // -------------------------------------------------------------------------
+
+  const sendSponsoredLamportsToRewardList = useCallback(
+    async (rewardListPda: PublicKey, amountLamports: bigint) => {
+      if (!publicKey || !signTransaction) return { success: false, error: "Wallet not connected" };
+      if (amountLamports <= 0n) return { success: false, error: "Amount must be greater than 0" };
+
+      setStatus({ loading: true, error: null, signature: null });
       try {
-        const actionEndpoint = getActionEndpoint("solana");
-        const txConnection =
-          actionEndpoint && actionEndpoint !== connection.rpcEndpoint
-            ? new anchor.web3.Connection(actionEndpoint, "confirmed")
-            : connection;
+        // Always submit to Solana base layer
+        const endpoint = ep("solana");
+        const conn = new Connection(endpoint, "confirmed");
 
-        const trimmedName = name.trim();
-        const trimmedSymbol = symbol.trim();
-        const trimmedUri = uri.trim();
-
-        if (!trimmedName || !trimmedSymbol || !trimmedUri) {
-          throw new Error("Name, symbol, and URI are required");
+        // Live delegation record check — mirrors on-chain assert_owner!
+        const isDelegated = await checkRewardListDelegated(conn, rewardListPda);
+        if (!isDelegated) {
+          setStatus({ loading: false, error: null, signature: null });
+          return { success: false, error: "Reward list is not delegated. Delegate it to the ephemeral rollup first.", endpoint };
         }
 
-        const [metadataAddress] = PublicKey.findProgramAddressSync(
-          [
-            Buffer.from("metadata"),
-            TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-            mint.toBuffer(),
-          ],
-          TOKEN_METADATA_PROGRAM_ID
-        );
-
-        setStatus({ loading: true, error: null, signature: null });
-
-        const transaction = new anchor.web3.Transaction().add(
-          createUpdateMetadataAccountV2Instruction(
-            {
-              metadata: metadataAddress,
-              updateAuthority: publicKey,
-            },
-            {
-              updateMetadataAccountArgsV2: {
-                data: {
-                  name: trimmedName,
-                  symbol: trimmedSymbol,
-                  uri: trimmedUri,
-                  sellerFeeBasisPoints: 0,
-                  creators: [
-                    {
-                      address: publicKey,
-                      verified: true,
-                      share: 100,
-                    },
-                  ],
-                  collection: null,
-                  uses: null,
-                },
-                updateAuthority: publicKey,
-                primarySaleHappened: null,
-                isMutable: null,
-              },
-            }
-          )
-        );
-
-        transaction.feePayer = publicKey;
-        transaction.recentBlockhash = (
-          await txConnection.getLatestBlockhash()
-        ).blockhash;
-
-        const signedTx = await signTransaction(transaction);
-        const signature = await txConnection.sendRawTransaction(
-          signedTx.serialize(),
-          { skipPreflight: true, maxRetries: 3 }
-        );
-
-        await txConnection.confirmTransaction(signature, "confirmed");
-
-        setStatus({ loading: false, error: null, signature });
-        return {
-          success: true,
-          signature,
-          endpoint: txConnection.rpcEndpoint,
-        };
+        const { tx } = buildSponsoredLamportsTransfer(publicKey, rewardListPda, amountLamports);
+        const result = await sendTransaction(tx, publicKey, signTransaction, endpoint);
+        setStatus({ loading: false, error: result.error ?? null, signature: result.signature ?? null });
+        return result;
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "Unknown error occurred";
-        setStatus({ loading: false, error: errorMessage, signature: null });
-        return { success: false, error: errorMessage };
+        const error = err instanceof Error ? err.message : "Unknown error";
+        setStatus({ loading: false, error, signature: null });
+        return { success: false, error };
       }
     },
-    [publicKey, connection, signTransaction, getActionEndpoint]
+    [publicKey, signTransaction, ep]
   );
 
   return {
@@ -1590,5 +336,6 @@ export const useTransaction = (props?: UseTransactionProps) => {
     mintNftToCollection,
     updateNftMetadata,
     sendSplTokenToDistributor,
+    sendSponsoredLamportsToRewardList,
   };
 };

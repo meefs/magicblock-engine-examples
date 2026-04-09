@@ -49,9 +49,17 @@ export function RewardsTable({ rewards }: RewardsTableProps) {
     );
   }
 
+  const totalRemaining = rewards.reduce(
+    (sum, r) => sum + Math.max(0, Number(r.redemptionLimit) - Number(r.redemptionCount)),
+    0
+  );
+
   return (
     <div className="card overflow-x-auto">
-      <h2 className="text-xl font-semibold text-white mb-4">Rewards</h2>
+      <div className="flex items-baseline gap-3 mb-4">
+        <h2 className="text-xl font-semibold text-white">Rewards</h2>
+        <span className="text-sm text-gray-400">{totalRemaining.toLocaleString()} / {rewards.reduce((sum, r) => sum + Number(r.redemptionLimit), 0).toLocaleString()} remaining</span>
+      </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-gray-700">

@@ -229,15 +229,21 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
           )}
           <select
             value={forms.sendToken.tokenMint}
-            onChange={(e) =>
+            onChange={(e) => {
+              const selectedOption = availableWalletMints.find(
+                (option) => option.mint === e.target.value
+              );
               setForms({
                 ...forms,
                 sendToken: {
                   ...forms.sendToken,
                   tokenMint: e.target.value,
+                  amount: selectedOption
+                    ? parseFloat(selectedOption.balanceLabel) || 0
+                    : forms.sendToken.amount,
                 },
-              })
-            }
+              });
+            }}
             disabled={localStatus.loading || loadingWalletMints || availableWalletMints.length === 0}
             className="mt-2 w-full rounded border border-gray-600 bg-gray-700 p-2 text-sm text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
           >
