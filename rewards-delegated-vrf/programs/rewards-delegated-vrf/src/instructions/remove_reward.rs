@@ -110,6 +110,7 @@ pub fn remove_reward(
         amount,
         ctx.accounts.admin.to_account_info(),
         ctx.accounts.destination.to_account_info(),
+        &[], // admin is a keypair signer, no PDA seeds needed
     )?;
 
     Ok(())

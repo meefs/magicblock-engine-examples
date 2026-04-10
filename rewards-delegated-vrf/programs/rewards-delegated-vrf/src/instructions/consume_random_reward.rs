@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+use crate::constants;
 use crate::instructions::shared::execute_reward_transfer;
 use crate::state::RewardType;
 use crate::ConsumeRandomReward;
@@ -11,6 +12,16 @@ pub fn consume_random_reward(
     let reward_distributor = &ctx.accounts.reward_distributor;
     let user = &ctx.accounts.user;
     let transfer_lookup_table = &ctx.accounts.transfer_lookup_table;
+
+    // Build PDA signer seeds for reward_list — it is now the payer for the intent bundle
+    let reward_list_bump = ctx.bumps.reward_list;
+    let reward_distributor_key = ctx.accounts.reward_distributor.key();
+    let reward_list_seeds: &[&[u8]] = &[
+        constants::REWARD_LIST_SEED,
+        reward_distributor_key.as_ref(),
+        &[reward_list_bump],
+    ];
+    let payer_seeds = &[reward_list_seeds];
 
     {
         let reward_list = &mut ctx.accounts.reward_list;
@@ -69,6 +80,7 @@ pub fn consume_random_reward(
                             amount,
                             ctx.accounts.reward_list.to_account_info(),
                             user.clone(),
+                            payer_seeds,
                         )?;
                         break;
                     } else {
