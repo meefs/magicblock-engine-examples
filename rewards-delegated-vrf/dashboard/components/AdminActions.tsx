@@ -569,7 +569,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     endpoint?: string
   ) => {
 
-    if (result.signature) {
+    if ('signature' in result && result.signature) {
       // Get the cluster endpoint from connection
       const clusterEndpoint =
         result.endpoint || endpoint || connection.rpcEndpoint || getDefaultSolanaEndpoint();
@@ -703,7 +703,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
       clientSeed
     );
 
-    if (result.signature) {
+    if ('signature' in result && result.signature) {
       // Get the cluster endpoint from connection
       const clusterEndpoint = result.endpoint || connection.rpcEndpoint || "https://api.devnet.solana.com";
 
