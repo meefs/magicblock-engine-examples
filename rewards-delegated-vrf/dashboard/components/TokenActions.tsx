@@ -175,7 +175,7 @@ export const TokenActions: React.FC<TokenActionsProps> = ({
       selectedMintOption?.decimals ?? 0
     );
 
-    if (result.signature) {
+    if ('signature' in result && result.signature) {
       const txId = addTransaction(
         result.signature,
         "Send SPL Token to Distributor",

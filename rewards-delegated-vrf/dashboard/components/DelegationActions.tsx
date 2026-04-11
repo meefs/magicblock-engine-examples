@@ -107,7 +107,7 @@ export const DelegationActions: React.FC<DelegationActionsProps> = ({
       loading: false,
       error: result.error || "Unknown error",
       signature: null,
-      endpoint: result.endpoint || null,
+      endpoint: ('endpoint' in result ? result.endpoint : null) || null,
     });
   };
 

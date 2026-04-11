@@ -315,9 +315,9 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
   const handleMintCollection = async () => {
     setLocalStatus({ loading: true, error: null, signature: null, endpoint: undefined });
     const config = forms.mintCollection;
-    const result = await mintNftCollection(config.name, config.symbol, config.uri, 0);
+    const result = await mintNftCollection(config.name, config.symbol, config.uri);
     
-    if (result.signature) {
+    if ('signature' in result && result.signature) {
       const txId = addTransaction(
         result.signature,
         "Mint NFT Collection",
@@ -379,7 +379,7 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
       config.uri
     );
 
-    if (result.signature) {
+    if ('signature' in result && result.signature) {
       const txId = addTransaction(
         result.signature,
         "Mint NFT to Collection",
@@ -432,7 +432,7 @@ export const NftActions: React.FC<NftActionsProps> = ({ selectedDistributor }) =
 
     const result = await updateNftMetadata(mint, config.name, config.symbol, config.uri);
 
-    if (result.signature) {
+    if ('signature' in result && result.signature) {
       const txId = addTransaction(
         result.signature,
         "Update NFT Metadata",
