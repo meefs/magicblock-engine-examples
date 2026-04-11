@@ -7,6 +7,21 @@ import { VRF_PROGRAM_ID, ORACLE_QUEUE, SLOT_HASHES_SYSVAR, getVrfProgramIdentity
 import { createReadonlyProvider, createProgram } from "@/lib/sendTransaction";
 import type { VrfCallbackData } from "./types";
 
+/**
+ * Read the validator pubkey from a delegation record account.
+ * DelegationRecord layout: [8 discriminator][32 authority = validator][...]
+ */
+async function getValidatorFromDelegationRecord(
+  connection: Connection,
+  delegationRecord: PublicKey
+): Promise<PublicKey> {
+  const accountInfo = await connection.getAccountInfo(delegationRecord);
+  if (!accountInfo || accountInfo.data.length < 40) {
+    throw new Error(`Delegation record not found or too short: ${delegationRecord.toBase58()}`);
+  }
+  return new PublicKey(accountInfo.data.slice(8, 40));
+}
+
 export async function buildRequestRandomReward(
   connection: Connection,
   publicKey: PublicKey,
@@ -18,6 +33,7 @@ export async function buildRequestRandomReward(
   const program = await createProgram(provider);
   const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
   const [transferLookupTablePda] = PDAs.getTransferLookupTable();
+  const [delegationRecordRewardList] = PDAs.getDelegationRecord(rewardListPda);
   return program.methods
     .requestRandomReward(clientSeed)
     .accounts({
@@ -27,6 +43,7 @@ export async function buildRequestRandomReward(
       rewardList: rewardListPda,
       transferLookupTable: transferLookupTablePda,
       oracleQueue: ORACLE_QUEUE,
+      delegationRecordRewardList,
       programIdentity: getVrfProgramIdentity(),
       vrfProgram: VRF_PROGRAM_ID,
       slotHashes: SLOT_HASHES_SYSVAR,
@@ -185,6 +202,9 @@ export async function buildRemoveReward(
   const program = await createProgram(provider);
   const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
   const [transferLookupTablePda] = PDAs.getTransferLookupTable();
+  const [delegationRecord] = PDAs.getDelegationRecord(rewardListPda);
+  const validator = await getValidatorFromDelegationRecord(connection, delegationRecord);
+  const [magicFeeVault] = PDAs.getMagicFeeVault(validator);
   return program.methods
     .removeReward(
       rewardName,
@@ -197,6 +217,7 @@ export async function buildRemoveReward(
       rewardList: rewardListPda,
       transferLookupTable: transferLookupTablePda,
       destination: publicKey,
+      magicFeeVault,
       magicProgram: MAGIC_PROGRAM_ID,
       magicContext: MAGIC_CONTEXT_ID,
     } as any)
@@ -217,6 +238,9 @@ export async function buildRemoveRewardsBatch(
   const program = await createProgram(provider);
   const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
   const [transferLookupTablePda] = PDAs.getTransferLookupTable();
+  const [delegationRecord] = PDAs.getDelegationRecord(rewardListPda);
+  const validator = await getValidatorFromDelegationRecord(connection, delegationRecord);
+  const [magicFeeVault] = PDAs.getMagicFeeVault(validator);
   const tx = new Transaction();
   for (const item of items) {
     const ix = await program.methods
@@ -231,6 +255,7 @@ export async function buildRemoveRewardsBatch(
         rewardList: rewardListPda,
         transferLookupTable: transferLookupTablePda,
         destination: publicKey,
+        magicFeeVault,
         magicProgram: MAGIC_PROGRAM_ID,
         magicContext: MAGIC_CONTEXT_ID,
       } as any)
