@@ -613,7 +613,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
         loading: false,
         error: result.error || "Unknown error",
         signature: null,
-        endpoint: result.endpoint || null,
+        endpoint: ('endpoint' in result ? result.endpoint : null) || null,
       });
     }
   };
@@ -762,7 +762,7 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
         loading: false,
         error: result.error || "Unknown error",
         signature: null,
-        endpoint: result.endpoint || null,
+        endpoint: ('endpoint' in result ? result.endpoint : null) || null,
       });
     }
   };
