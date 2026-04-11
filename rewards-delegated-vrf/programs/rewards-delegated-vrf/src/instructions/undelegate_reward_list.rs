@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use ephemeral_rollups_sdk::ephem::commit_and_undelegate_accounts;
+use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 
 use crate::UndelegateRewardList;
 
@@ -8,11 +8,14 @@ pub fn undelegate_reward_list(ctx: Context<UndelegateRewardList>) -> Result<()> 
         "Undelegating reward list: {:?}",
         ctx.accounts.reward_list.key()
     );
-    commit_and_undelegate_accounts(
-        &ctx.accounts.payer,
-        vec![&ctx.accounts.reward_list.to_account_info()],
-        &ctx.accounts.magic_context,
-        &ctx.accounts.magic_program,
-    )?;
+
+    MagicIntentBundleBuilder::new(
+        ctx.accounts.payer.to_account_info(),
+        ctx.accounts.magic_context.to_account_info(),
+        ctx.accounts.magic_program.to_account_info(),
+    )
+    .commit_and_undelegate(&[ctx.accounts.reward_list.to_account_info()])
+    .build_and_invoke()?;
+
     Ok(())
 }
