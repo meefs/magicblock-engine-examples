@@ -202,8 +202,8 @@ export async function buildRemoveReward(
   const program = await createProgram(provider);
   const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
   const [transferLookupTablePda] = PDAs.getTransferLookupTable();
-  const [delegationRecord] = PDAs.getDelegationRecord(rewardListPda);
-  const validator = await getValidatorFromDelegationRecord(connection, delegationRecord);
+  const [delegationRecordRewardList] = PDAs.getDelegationRecord(rewardListPda);
+  const validator = await getValidatorFromDelegationRecord(connection, delegationRecordRewardList);
   const [magicFeeVault] = PDAs.getMagicFeeVault(validator);
   return program.methods
     .removeReward(
@@ -217,6 +217,7 @@ export async function buildRemoveReward(
       rewardList: rewardListPda,
       transferLookupTable: transferLookupTablePda,
       destination: publicKey,
+      delegationRecordRewardList,
       magicFeeVault,
       magicProgram: MAGIC_PROGRAM_ID,
       magicContext: MAGIC_CONTEXT_ID,
@@ -238,8 +239,8 @@ export async function buildRemoveRewardsBatch(
   const program = await createProgram(provider);
   const rewardListPda = PDAs.getRewardList(rewardDistributorPda)[0];
   const [transferLookupTablePda] = PDAs.getTransferLookupTable();
-  const [delegationRecord] = PDAs.getDelegationRecord(rewardListPda);
-  const validator = await getValidatorFromDelegationRecord(connection, delegationRecord);
+  const [delegationRecordRewardList] = PDAs.getDelegationRecord(rewardListPda);
+  const validator = await getValidatorFromDelegationRecord(connection, delegationRecordRewardList);
   const [magicFeeVault] = PDAs.getMagicFeeVault(validator);
   const tx = new Transaction();
   for (const item of items) {
@@ -255,6 +256,7 @@ export async function buildRemoveRewardsBatch(
         rewardList: rewardListPda,
         transferLookupTable: transferLookupTablePda,
         destination: publicKey,
+        delegationRecordRewardList,
         magicFeeVault,
         magicProgram: MAGIC_PROGRAM_ID,
         magicContext: MAGIC_CONTEXT_ID,
