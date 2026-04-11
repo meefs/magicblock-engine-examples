@@ -217,6 +217,9 @@ pub struct RequestRandomReward<'info> {
     /// CHECK: Validated by address constraint against the known VRF oracle queue
     #[account(mut, address = ephemeral_vrf_sdk::consts::DEFAULT_EPHEMERAL_QUEUE)]
     pub oracle_queue: AccountInfo<'info>,
+    /// CHECK: Delegation record for reward_list — authority field contains the validator, used to derive magic_fee_vault for the callback
+    #[account(address = ephemeral_rollups_sdk::pda::delegation_record_pda_from_delegated_account(&reward_list.key()))]
+    pub delegation_record_reward_list: AccountInfo<'info>,
 }
 
 #[commit]
@@ -231,6 +234,9 @@ pub struct ConsumeRandomReward<'info> {
     pub reward_list: Account<'info, state::RewardsList>,
     #[account(seeds = [constants::TRANSFER_LOOKUP_TABLE_SEED], bump)]
     pub transfer_lookup_table: Account<'info, state::TransferLookupTable>,
+    /// CHECK: Magic fee vault — required when reward_list payer is delegated
+    #[account(mut)]
+    pub magic_fee_vault: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -262,6 +268,12 @@ pub struct RemoveReward<'info> {
     pub transfer_lookup_table: Account<'info, state::TransferLookupTable>,
     /// CHECK: destination of the removed reward
     pub destination: AccountInfo<'info>,
+    /// CHECK: Delegation record for reward_list — authority field contains the validator, used to derive magic_fee_vault
+    #[account(address = ephemeral_rollups_sdk::pda::delegation_record_pda_from_delegated_account(&reward_list.key()))]
+    pub delegation_record_reward_list: AccountInfo<'info>,
+    /// CHECK: Magic fee vault — derived from the validator in the delegation record
+    #[account(mut)]
+    pub magic_fee_vault: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]

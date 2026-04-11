@@ -80,6 +80,7 @@ pub fn consume_random_reward(
                             amount,
                             ctx.accounts.reward_list.to_account_info(),
                             user.clone(),
+                            ctx.accounts.magic_fee_vault.to_account_info(),
                             payer_seeds,
                         )?;
                         break;

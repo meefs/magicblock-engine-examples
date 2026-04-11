@@ -572,6 +572,7 @@ it("Set Reward List Parameters", async () => {
 
   it("Request Random Reward (should fail - unauthorized user)", async () => {
     const clientSeed = Math.floor(Math.random() * 256);
+    const delegationRecordRewardList = PDAs.getDelegationRecord(program.programId, rewardListPda);
 
     try {
       const tx = await ephemeralProgram.methods
@@ -581,6 +582,7 @@ it("Set Reward List Parameters", async () => {
           admin: user.publicKey,
           rewardDistributor: rewardDistributorPda,
           rewardList: rewardListPda,
+          delegationRecordRewardList,
         })
         .signers([user])
         .rpc({ skipPreflight: true })
@@ -599,6 +601,7 @@ it("Set Reward List Parameters", async () => {
 
   it("Request Random Reward (authorized admin)", async () => {
     const clientSeed = Math.floor(Math.random() * 256);
+    const delegationRecordRewardList = PDAs.getDelegationRecord(program.programId, rewardListPda);
 
     let tx = await ephemeralProgram.methods
       .requestRandomReward(clientSeed)
@@ -607,6 +610,7 @@ it("Set Reward List Parameters", async () => {
         admin: wallet.publicKey,
         rewardDistributor: rewardDistributorPda,
         rewardList: rewardListPda,
+        delegationRecordRewardList,
       })
       .transaction();
 

@@ -4,6 +4,7 @@ import {
   REWARD_DISTRIBUTOR_SEED,
   REWARD_LIST_SEED,
   TRANSFER_LOOKUP_TABLE_SEED,
+  DELEGATION_PROGRAM_ID,
 } from "./constants";
 
 /**
@@ -36,6 +37,15 @@ export class PDAs {
     const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from(TRANSFER_LOOKUP_TABLE_SEED)],
       programId
+    );
+    return pda;
+  }
+
+  /** Delegation record PDA for a delegated account (seeds: ["delegation", account]) */
+  static getDelegationRecord(delegatedAccount: PublicKey): PublicKey {
+    const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("delegation"), delegatedAccount.toBytes()],
+      DELEGATION_PROGRAM_ID
     );
     return pda;
   }

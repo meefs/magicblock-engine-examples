@@ -4,8 +4,8 @@ use ephemeral_vrf_sdk::instructions::{create_request_randomness_ix, RequestRando
 use ephemeral_vrf_sdk::types::SerializableAccountMeta;
 
 use crate::instruction;
-use crate::ID;
 use crate::RequestRandomReward;
+use crate::ID;
 
 pub fn request_random_reward(ctx: Context<RequestRandomReward>, client_seed: u8) -> Result<()> {
     msg!("Requesting randomness for reward...");
@@ -30,6 +30,25 @@ pub fn request_random_reward(ctx: Context<RequestRandomReward>, client_seed: u8)
         );
         return Ok(());
     }
+
+    // DelegationRecord layout: [8 discriminator][32 authority (validator)][...]
+    // Read validator pubkey directly from raw bytes to avoid importing the struct.
+    let delegation_record_data = ctx
+        .accounts
+        .delegation_record_reward_list
+        .try_borrow_data()?;
+    require!(
+        delegation_record_data.len() >= 40,
+        crate::errors::RewardError::InvalidDelegationRecord
+    );
+    let validator = Pubkey::try_from(&delegation_record_data[8..40])
+        .map_err(|_| error!(crate::errors::RewardError::InvalidDelegationRecord))?;
+    drop(delegation_record_data);
+    // Seeds: ["magic-fee-vault", validator] under the delegation program
+    let (magic_fee_vault, _) = Pubkey::find_program_address(
+        &[b"magic-fee-vault", validator.as_ref()],
+        &ephemeral_rollups_sdk::id(),
+    );
 
     let ix = create_request_randomness_ix(RequestRandomnessParams {
         payer: ctx.accounts.admin.key(),
@@ -57,6 +76,11 @@ pub fn request_random_reward(ctx: Context<RequestRandomReward>, client_seed: u8)
                 pubkey: ctx.accounts.transfer_lookup_table.key(),
                 is_signer: false,
                 is_writable: false,
+            },
+            SerializableAccountMeta {
+                pubkey: magic_fee_vault,
+                is_signer: false,
+                is_writable: true,
             },
             SerializableAccountMeta {
                 pubkey: MAGIC_PROGRAM_ID,

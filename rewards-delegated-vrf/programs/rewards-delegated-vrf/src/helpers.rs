@@ -210,6 +210,16 @@ pub fn validate_reward_inventory(
             reward.reward_type,
             RewardType::LegacyNft | RewardType::ProgrammableNft
         ) {
+            // Only log/check NFT inventory for the reward using the mint being added,
+            // or for all NFT rewards if no specific mint is provided.
+            let is_relevant = mint
+                .map(|m| reward.reward_mints.contains(&m.key()))
+                .unwrap_or(true);
+
+            if !is_relevant {
+                continue;
+            }
+
             let available_nfts = reward.reward_mints.len() as u64;
             let remaining_inventory = remaining_redemptions(reward);
 

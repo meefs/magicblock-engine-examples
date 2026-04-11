@@ -98,6 +98,31 @@ pub fn remove_reward(
         _ => reward_amount * redemption_amount.unwrap_or(1),
     };
 
+    let reward_list_bump = ctx.bumps.reward_list;
+    let reward_distributor_key = ctx.accounts.reward_distributor.key();
+    let reward_list_seeds: &[&[u8]] = &[
+        crate::constants::REWARD_LIST_SEED,
+        reward_distributor_key.as_ref(),
+        &[reward_list_bump],
+    ];
+    let payer_seeds = &[reward_list_seeds];
+
+    // DelegationRecord layout: [8 discriminator][32 authority = validator][...]
+    let delegation_record_data = ctx.accounts.delegation_record_reward_list.try_borrow_data()?;
+    require!(delegation_record_data.len() >= 40, crate::errors::RewardError::InvalidDelegationRecord);
+    let validator = Pubkey::try_from(&delegation_record_data[8..40])
+        .map_err(|_| error!(crate::errors::RewardError::InvalidDelegationRecord))?;
+    drop(delegation_record_data);
+    let (expected_fee_vault, _) = Pubkey::find_program_address(
+        &[b"magic-fee-vault", validator.as_ref()],
+        &ephemeral_rollups_sdk::id(),
+    );
+    require_keys_eq!(
+        ctx.accounts.magic_fee_vault.key(),
+        expected_fee_vault,
+        crate::errors::RewardError::InvalidDelegationRecord
+    );
+
     execute_reward_transfer(
         &ctx.accounts.reward_distributor,
         &ctx.accounts.transfer_lookup_table,
@@ -108,9 +133,10 @@ pub fn remove_reward(
         reward_type,
         ruleset_pda,
         amount,
-        ctx.accounts.admin.to_account_info(),
+        ctx.accounts.reward_list.to_account_info(),
         ctx.accounts.destination.to_account_info(),
-        &[], // admin is a keypair signer, no PDA seeds needed
+        ctx.accounts.magic_fee_vault.to_account_info(),
+        payer_seeds,
     )?;
 
     Ok(())

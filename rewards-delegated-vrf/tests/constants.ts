@@ -12,4 +12,8 @@ export const TOKEN_MINT = new PublicKey("BbhNpb7RpkfVd2EtMX4z7mEAZmzsAUZmSqYBmMF
 export const TOKEN_DECIMALS = 6;
 export const DISTRIBUTOR_MINT_AMOUNT = 5000 * Math.pow(10, TOKEN_DECIMALS);
 
+export const DELEGATION_PROGRAM_ID = new PublicKey(
+  "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+);
+
 export const BPF_UPGRADEABLE_LOADER = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");

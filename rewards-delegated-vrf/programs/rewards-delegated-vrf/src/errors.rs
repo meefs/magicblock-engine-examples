@@ -124,4 +124,7 @@ pub enum RewardError {
 
     #[msg("Mint is already part of the existing reward")]
     MintAlreadyInReward,
+
+    #[msg("Failed to deserialize the delegation record for reward_list")]
+    InvalidDelegationRecord,
 }

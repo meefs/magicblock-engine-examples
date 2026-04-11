@@ -19,6 +19,7 @@ pub fn execute_reward_transfer<'info>(
     amount: u64,
     payer: AccountInfo<'info>,
     destination: AccountInfo<'info>,
+    magic_fee_vault: AccountInfo<'info>,
     // Seeds for PDA signing — reward_list is now the payer so it must sign via seeds
     payer_seeds: &[&[&[u8]]],
 ) -> Result<()> {
@@ -89,6 +90,7 @@ pub fn execute_reward_transfer<'info>(
                 magic_context.to_account_info(),
                 magic_program.to_account_info(),
             )
+            .magic_fee_vault(magic_fee_vault.to_account_info())
             .commit(&[reward_list.to_account_info()])
             .add_post_commit_actions([action])
             .build_and_invoke_signed(payer_seeds)?;
@@ -195,6 +197,7 @@ pub fn execute_reward_transfer<'info>(
                 magic_context.to_account_info(),
                 magic_program.to_account_info(),
             )
+            .magic_fee_vault(magic_fee_vault.to_account_info())
             .commit(&[reward_list.to_account_info()])
             .add_post_commit_actions([action])
             .build_and_invoke_signed(payer_seeds)?;
