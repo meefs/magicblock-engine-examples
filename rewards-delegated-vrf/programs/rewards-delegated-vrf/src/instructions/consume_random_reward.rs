@@ -25,6 +25,8 @@ pub fn consume_random_reward(
 
     {
         let reward_list = &mut ctx.accounts.reward_list;
+        // Log the raw randomness proof as hex for auditability
+        msg!("Randomness proof: {:?}", randomness.map(|b| b));
         let rnd_u32 = ephemeral_vrf_sdk::rnd::random_u32(&randomness);
         let range = (reward_list.global_range_max as u64)
             .checked_sub(reward_list.global_range_min as u64)
@@ -61,7 +63,15 @@ pub fn consume_random_reward(
                         let reward_type = reward.reward_type.clone();
                         let mint = match reward_type {
                             RewardType::LegacyNft | RewardType::ProgrammableNft => {
-                                reward.reward_mints.remove(0)
+                                let mint_count = reward.reward_mints.len();
+                                // Use a different slice of randomness to pick which mint
+                                // to send — avoids correlation with the reward selection.
+                                let mut rnd_bytes = [0u8; 32];
+                                rnd_bytes.copy_from_slice(&randomness);
+                                rnd_bytes.rotate_left(4);
+                                let rnd_mint = ephemeral_vrf_sdk::rnd::random_u32(&rnd_bytes);
+                                let mint_index = (rnd_mint as usize) % mint_count;
+                                reward.reward_mints.remove(mint_index)
                             }
                             _ => reward.reward_mints[0],
                         };
