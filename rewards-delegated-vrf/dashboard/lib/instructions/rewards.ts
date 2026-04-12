@@ -286,9 +286,12 @@ export async function buildUpdateReward(
     admin: publicKey,
     rewardDistributor: rewardDistributorPda,
     rewardList: rewardListPda,
+    // Optional accounts must be explicitly null when not used.
+    // Omitting them entirely causes Anchor to throw
+    // "Account `mint` not provided" even though they are optional in the IDL.
+    mint: rewardMint ?? null,
+    tokenAccount: tokenAccount ?? null,
   };
-  if (rewardMint) accounts.mint = rewardMint;
-  if (tokenAccount) accounts.tokenAccount = tokenAccount;
   return program.methods
     .updateReward(
       currentRewardName,
