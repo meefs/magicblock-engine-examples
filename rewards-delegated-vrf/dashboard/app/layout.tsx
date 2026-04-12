@@ -4,7 +4,8 @@ import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "Rewards VRF Dashboard",
-  description: "Admin dashboard for managing Solana rewards distribution via VRF",
+  description:
+    "Admin dashboard for managing Solana rewards distribution via VRF",
 };
 
 export default function RootLayout({

@@ -28,9 +28,11 @@ export default function Home() {
   const { connection } = useConnection();
   const [dismissedError, setDismissedError] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [selectedDistributor, setSelectedDistributor] = useState<string | null>(null);
+  const [selectedDistributor, setSelectedDistributor] = useState<string | null>(
+    null
+  );
   const { distributors } = useDiscoverDistributors(publicKey);
-  
+
   const { distributor, rewardList, loading, error, refetch } = useRewardData(
     publicKey,
     selectedDistributor ? new PublicKey(selectedDistributor) : null
@@ -53,9 +55,11 @@ export default function Home() {
     }
   }, [publicKey, distributors, selectedDistributor]);
 
-  const distributorPda = selectedDistributor 
+  const distributorPda = selectedDistributor
     ? new PublicKey(selectedDistributor)
-    : publicKey ? PDAs.getRewardDistributor(publicKey)[0] : null;
+    : publicKey
+    ? PDAs.getRewardDistributor(publicKey)[0]
+    : null;
 
   // Don't render wallet-dependent content until mounted
   if (!mounted) {
@@ -80,8 +84,12 @@ export default function Home() {
         {/* Distributor Switcher */}
         {publicKey && (
           <DistributorSwitcher
-            selectedDistributor={selectedDistributor ? new PublicKey(selectedDistributor) : null}
-            onSelectDistributor={(dist) => setSelectedDistributor(dist.toString())}
+            selectedDistributor={
+              selectedDistributor ? new PublicKey(selectedDistributor) : null
+            }
+            onSelectDistributor={(dist) =>
+              setSelectedDistributor(dist.toString())
+            }
           />
         )}
 
@@ -135,7 +143,8 @@ export default function Home() {
             {!loading && !distributor && !error && (
               <div className="card text-center py-8">
                 <p className="text-gray-400">
-                  No reward distributor found. Initialize one first using the program.
+                  No reward distributor found. Initialize one first using the
+                  program.
                 </p>
               </div>
             )}
@@ -145,26 +154,41 @@ export default function Home() {
         {/* Admin Actions Section */}
         {publicKey && (
           <div className="pt-8 border-t border-gray-700">
-            <AdminActions selectedDistributor={selectedDistributor ? new PublicKey(selectedDistributor) : null} />
+            <AdminActions
+              selectedDistributor={
+                selectedDistributor ? new PublicKey(selectedDistributor) : null
+              }
+            />
           </div>
         )}
 
         {publicKey && (
           <div className="pt-8 border-t border-gray-700">
-            <DelegationActions selectedDistributor={selectedDistributor ? new PublicKey(selectedDistributor) : null} />
+            <DelegationActions
+              selectedDistributor={
+                selectedDistributor ? new PublicKey(selectedDistributor) : null
+              }
+            />
           </div>
         )}
 
         {/* NFT Management Section */}
         {publicKey && (
           <div className="pt-8 border-t border-gray-700">
-            <NftActions selectedDistributor={selectedDistributor ? new PublicKey(selectedDistributor) : null} />
+            <NftActions
+              selectedDistributor={
+                selectedDistributor ? new PublicKey(selectedDistributor) : null
+              }
+            />
           </div>
         )}
 
         {/* Transaction History */}
         <div className="pt-8 border-t border-gray-700">
-          <TransactionHistory transactions={transactions} onRemove={removeTransaction} />
+          <TransactionHistory
+            transactions={transactions}
+            onRemove={removeTransaction}
+          />
         </div>
       </main>
     </div>
