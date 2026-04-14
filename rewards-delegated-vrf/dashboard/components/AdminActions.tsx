@@ -180,13 +180,16 @@ export const AdminActions: React.FC<AdminActionsProps> = ({ selectedDistributor 
     if (activeModal !== "fundRewardList" || !rewardListBalance || rewardListBalance.loading) return;
 
     const LAMPORTS_PER_TX = 50_000;
+    // Rent-exempt minimum for a 165-byte SPL token account (ATA created on each redemption)
+    const LAMPORTS_PER_TOKEN_ACCOUNT = 2_039_280;
+    const LAMPORTS_PER_REDEMPTION = LAMPORTS_PER_TX + LAMPORTS_PER_TOKEN_ACCOUNT;
     const totalRemaining = (rewardList?.rewards ?? []).reduce(
       (sum: number, r: any) => sum + Math.max(0, Number(r.redemptionLimit) - Number(r.redemptionCount)),
       0
     );
 
     // Lamports needed to cover all remaining redemptions + 20% buffer
-    const neededLamports = Math.ceil(totalRemaining * LAMPORTS_PER_TX * 1.2);
+    const neededLamports = Math.ceil(totalRemaining * LAMPORTS_PER_REDEMPTION * 1.2);
     const currentExcess = rewardListBalance.totalLamports - rewardListBalance.rentExemptLamports;
     const deficitLamports = Math.max(0, neededLamports - currentExcess);
 
