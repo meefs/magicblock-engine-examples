@@ -94,6 +94,9 @@ export function RewardListCard({ rewardList }: RewardListCardProps) {
   const isActive = startDate <= now && now <= endDate;
 
   const LAMPORTS_PER_TX = 50_000;
+  // Rent-exempt minimum for a 165-byte SPL token account (ATA created on each redemption)
+  const LAMPORTS_PER_TOKEN_ACCOUNT = 2_039_280;
+  const LAMPORTS_PER_REDEMPTION = LAMPORTS_PER_TX + LAMPORTS_PER_TOKEN_ACCOUNT;
   const totalRemaining = rewardList.rewards.reduce(
     (sum, r) => sum + Math.max(0, Number(r.redemptionLimit) - Number(r.redemptionCount)),
     0
@@ -216,7 +219,7 @@ export function RewardListCard({ rewardList }: RewardListCardProps) {
 
         {solBalance.status === "found" && (() => {
           const excess = solBalance.totalLamports - solBalance.rentExemptLamports;
-          const estimatedTxs = Math.floor(excess / LAMPORTS_PER_TX);
+          const estimatedTxs = Math.floor(excess / LAMPORTS_PER_REDEMPTION);
           const insufficientFunds = totalRemaining > 0 && estimatedTxs < totalRemaining;
           return (
             <>
