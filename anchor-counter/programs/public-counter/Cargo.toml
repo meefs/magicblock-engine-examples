@@ -1,12 +1,12 @@
 [package]
-name = "anchor-rock-paper-scissor"
+name = "public-counter"
 version = "0.1.0"
 description = "Created with Anchor"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "anchor_rock_paper_scissor"
+name = "public_counter"
 
 [features]
 default = []
@@ -21,4 +21,4 @@ anchor-debug = []
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
-ephemeral-rollups-sdk = { version = "0.11.0", features = ["anchor", "access-control"] }
+ephemeral-rollups-sdk = { version = "0.11.1", features = ["anchor", "disable-realloc"] }
