@@ -43,15 +43,24 @@ pub mod private_counter {
         ctx: Context<DelegateCounterPrivately>,
         members: Option<Vec<Member>>,
     ) -> Result<()> {
+        // ANYONE can set and delegate through invoke_signed, may want to set checks/guards
+
         // Optionally set a specific validator from the accounts struct
         let validator = ctx.accounts.validator.as_ref();
-        // 1. Create the permission account BEFORE delegating (skip if already exists).
+        // 1. Create / Update the permission account BEFORE delegating (skip if already exists).
         if ctx.accounts.permission.data_is_empty() {
             CreatePermissionCpiBuilder::new(&ctx.accounts.permission_program)
                 .permissioned_account(&ctx.accounts.counter.to_account_info())
                 .permission(&ctx.accounts.permission.to_account_info())
                 .payer(&ctx.accounts.payer.to_account_info())
                 .system_program(&ctx.accounts.system_program.to_account_info())
+                .args(MembersArgs { members })
+                .invoke_signed(&[&[COUNTER_SEED, &[ctx.bumps.counter]]])?;
+        } else {
+            UpdatePermissionCpiBuilder::new(&ctx.accounts.permission_program.to_account_info())
+                .authority(&ctx.accounts.payer.to_account_info(), true)
+                .permissioned_account(&ctx.accounts.counter.to_account_info(), true)
+                .permission(&ctx.accounts.permission.to_account_info())
                 .args(MembersArgs { members })
                 .invoke_signed(&[&[COUNTER_SEED, &[ctx.bumps.counter]]])?;
         }
@@ -146,24 +155,11 @@ pub mod private_counter {
         Ok(())
     }
 
-    // Update permission via CPI
-    pub fn update_permission(
-        ctx: Context<UpdatePermission>,
-        members: Option<Vec<Member>>,
-    ) -> Result<()> {
-        UpdatePermissionCpiBuilder::new(&ctx.accounts.permission_program.to_account_info())
-            .authority(&ctx.accounts.authority.to_account_info(), true)
-            .permissioned_account(&ctx.accounts.counter.to_account_info(), true)
-            .permission(&ctx.accounts.permission.to_account_info())
-            .args(MembersArgs { members })
-            .invoke_signed(&[&[COUNTER_SEED, &[ctx.bumps.counter]]])?;
-        Ok(())
-    }
-
     // Commit and undelegate permission via CPI
     pub fn commit_and_undelegate_permission(
         ctx: Context<CommitAndUndelegatePermission>,
     ) -> Result<()> {
+        // ANYONE can undelegate through invoke_signed, may want to set checks/guards
         CommitAndUndelegatePermissionCpiBuilder::new(
             &ctx.accounts.permission_program.to_account_info(),
         )
@@ -231,30 +227,6 @@ pub struct IncrementAndCommit<'info> {
     pub counter: Account<'info, Counter>,
 }
 
-#[account]
-pub struct Counter {
-    pub count: u64,
-}
-
-// Update Permission via CPI on Solana or ER
-#[derive(Accounts)]
-pub struct UpdatePermission<'info> {
-    #[account(seeds = [COUNTER_SEED], bump)]
-    pub counter: Account<'info, Counter>,
-    /// CHECK: Checked by the permission program
-    #[account(mut, seeds = [PERMISSION_SEED, counter.key().as_ref()], bump, seeds::program = permission_program.key())]
-    pub permission: AccountInfo<'info>,
-    #[account(mut)]
-    pub payer: Signer<'info>,
-    /// CHECK: PROGRAM
-    #[account(mut)]
-    pub authority: UncheckedAccount<'info>,
-    /// CHECK: PERMISSION PROGRAM
-    #[account(address = PERMISSION_PROGRAM_ID)]
-    pub permission_program: UncheckedAccount<'info>,
-    pub system_program: Program<'info, System>,
-}
-
 #[commit]
 #[derive(Accounts)]
 pub struct CommitAndUndelegatePermission<'info> {
@@ -268,4 +240,9 @@ pub struct CommitAndUndelegatePermission<'info> {
     /// CHECK: PERMISSION PROGRAM
     #[account(address = PERMISSION_PROGRAM_ID)]
     pub permission_program: UncheckedAccount<'info>,
+}
+
+#[account]
+pub struct Counter {
+    pub count: u64,
 }

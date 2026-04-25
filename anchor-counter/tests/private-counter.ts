@@ -7,7 +7,7 @@ import * as nacl from "tweetnacl";
 
 const COUNTER_SEED = "counter";
 
-describe("private-counter", () => {
+describe.only("private-counter", () => {
   console.log("private-counter.ts");
 
   let provider = new anchor.AnchorProvider(
@@ -164,29 +164,6 @@ describe("private-counter", () => {
     tx = await providerEphemeralRollup.wallet.signTransaction(tx);
     const txHash = await providerEphemeralRollup.sendAndConfirm(tx);
     console.log(`${Date.now() - start}ms (ER) Increment txHash: ${txHash}`);
-  });
-
-  it("Update permission members on ER", async () => {
-    const start = Date.now();
-    const members = [
-      { flags: TX_LOGS_FLAG, pubkey: provider.wallet.publicKey },
-    ];
-    let tx = await program.methods
-      .updatePermission(members)
-      .accounts({
-        payer: providerEphemeralRollup.wallet.publicKey,
-        authority: counterPDA,
-      })
-      .transaction();
-    tx.feePayer = providerEphemeralRollup.wallet.publicKey;
-    tx.recentBlockhash = (
-      await providerEphemeralRollup.connection.getLatestBlockhash()
-    ).blockhash;
-    tx = await providerEphemeralRollup.wallet.signTransaction(tx);
-    const txHash = await providerEphemeralRollup.sendAndConfirm(tx);
-    console.log(
-      `${Date.now() - start}ms (ER) Update Permission txHash: ${txHash}`,
-    );
   });
 
   it("Commit counter state on ER to Solana", async () => {
