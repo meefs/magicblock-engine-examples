@@ -20,6 +20,7 @@ pub mod private_counter {
     use super::*;
 
     /// Initialize the counter.
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let counter = &mut ctx.accounts.counter;
         counter.count = 0;
@@ -28,6 +29,7 @@ pub mod private_counter {
     }
 
     /// Increment the counter.
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn increment(ctx: Context<Increment>) -> Result<()> {
         let counter = &mut ctx.accounts.counter;
         counter.count += 1;
@@ -39,12 +41,11 @@ pub mod private_counter {
     }
 
     /// Delegate the account to the delegation program
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn delegate(
         ctx: Context<DelegateCounterPrivately>,
         members: Option<Vec<Member>>,
     ) -> Result<()> {
-        // ANYONE can set and delegate through invoke_signed, may want to set checks/guards
-
         // Optionally set a specific validator from the accounts struct
         let validator = ctx.accounts.validator.as_ref();
         // 1. Create / Update the permission account BEFORE delegating (skip if already exists).
@@ -99,7 +100,9 @@ pub mod private_counter {
     }
 
     /// Manual commit the account in the ER.
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn commit(ctx: Context<IncrementAndCommit>) -> Result<()> {
+        // ANYONE can commit through invoke_signed, may want to set checks/guards
         MagicIntentBundleBuilder::new(
             ctx.accounts.payer.to_account_info(),
             ctx.accounts.magic_context.to_account_info(),
@@ -123,6 +126,7 @@ pub mod private_counter {
     }
 
     /// Increment the counter + manual commit the account in the ER.
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn increment_and_commit(ctx: Context<IncrementAndCommit>) -> Result<()> {
         let counter = &mut ctx.accounts.counter;
         counter.count += 1;
@@ -139,6 +143,7 @@ pub mod private_counter {
     }
 
     /// Increment the counter + manual commit the account in the ER.
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn increment_and_undelegate(ctx: Context<IncrementAndCommit>) -> Result<()> {
         let counter = &mut ctx.accounts.counter;
         counter.count += 1;
@@ -155,11 +160,11 @@ pub mod private_counter {
         Ok(())
     }
 
-    // Commit and undelegate permission via CPI
+    /// Commit and undelegate permission via CPI
+    /// ANYONE can invoke_signed, may want to set checks/guards
     pub fn commit_and_undelegate_permission(
         ctx: Context<CommitAndUndelegatePermission>,
     ) -> Result<()> {
-        // ANYONE can undelegate through invoke_signed, may want to set checks/guards
         CommitAndUndelegatePermissionCpiBuilder::new(
             &ctx.accounts.permission_program.to_account_info(),
         )
