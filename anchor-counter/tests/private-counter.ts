@@ -212,30 +212,7 @@ describe.only("private-counter", () => {
     );
   });
 
-  it("Commit and undelegate permission from ER to Solana", async () => {
-    const start = Date.now();
-    let tx = await program.methods
-      .commitAndUndelegatePermission()
-      .accounts({
-        payer: providerEphemeralRollup.wallet.publicKey,
-      })
-      .transaction();
-    tx.feePayer = providerEphemeralRollup.wallet.publicKey;
-    tx.recentBlockhash = (
-      await providerEphemeralRollup.connection.getLatestBlockhash()
-    ).blockhash;
-    tx = await providerEphemeralRollup.wallet.signTransaction(tx);
-    const txHash = await providerEphemeralRollup.sendAndConfirm(tx, [], {
-      skipPreflight: true,
-    });
-    console.log(
-      `${Date.now() - start}ms (ER) Undelegate Permission txHash: ${txHash}`,
-    );
-    // Wait for permission undelegation to settle back on the base layer
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  });
-
-  it("Increment and undelegate counter from ER to Solana", async () => {
+  it("Commit and undelegate permission + counter from ER to Solana", async () => {
     const start = Date.now();
     let tx = await program.methods
       .incrementAndUndelegate()
@@ -252,7 +229,7 @@ describe.only("private-counter", () => {
     console.log(
       `${Date.now() - start}ms (ER) Increment and Undelegate txHash: ${txHash}`,
     );
-    // Wait for counter undelegation to settle back on the base layer
+    // Wait for both permission and counter undelegations to settle back on the base layer
     await new Promise((resolve) => setTimeout(resolve, 5000));
   });
 

@@ -113,8 +113,26 @@ pub mod private_counter {
         Ok(())
     }
 
-    /// Undelegate the account from the delegation program
-    pub fn undelegate(ctx: Context<IncrementAndCommit>) -> Result<()> {
+    /// Commit and undelegate BOTH the permission account and the counter in one
+    /// atomic ER transaction.
+    ///
+    /// Step 1 releases the permission account via the Permission Program.
+    /// Step 2 commits + undelegates the counter via the ephemeral rollups SDK.
+    /// Both intents are scheduled on `magic_context` and applied together when
+    /// the ER transaction is sealed back to the base layer.
+    pub fn undelegate(ctx: Context<UndelegateCounter>) -> Result<()> {
+        // 1. Commit and undelegate the permission account
+        CommitAndUndelegatePermissionCpiBuilder::new(
+            &ctx.accounts.permission_program.to_account_info(),
+        )
+        .authority(&ctx.accounts.payer.to_account_info(), true)
+        .permissioned_account(&ctx.accounts.counter.to_account_info(), true)
+        .permission(&ctx.accounts.permission.to_account_info())
+        .magic_context(&ctx.accounts.magic_context.to_account_info())
+        .magic_program(&ctx.accounts.magic_program.to_account_info())
+        .invoke_signed(&[&[COUNTER_SEED, &[ctx.bumps.counter]]])?;
+
+        // 2. Commit and undelegate the counter
         MagicIntentBundleBuilder::new(
             ctx.accounts.payer.to_account_info(),
             ctx.accounts.magic_context.to_account_info(),
@@ -142,29 +160,16 @@ pub mod private_counter {
         Ok(())
     }
 
-    /// Increment the counter + manual commit the account in the ER.
-    /// ANYONE can invoke_signed, may want to set checks/guards
-    pub fn increment_and_undelegate(ctx: Context<IncrementAndCommit>) -> Result<()> {
+    /// Increment the counter + commit and undelegate both the permission account
+    /// and the counter in one atomic ER transaction.
+    pub fn increment_and_undelegate(ctx: Context<UndelegateCounter>) -> Result<()> {
         let counter = &mut ctx.accounts.counter;
         counter.count += 1;
         msg!("PDA {} count: {}", counter.key(), counter.count);
-        // Serialize the Anchor counter account, commit and undelegate
+        // Serialize the Anchor counter account before the commit+undelegate CPIs
         counter.exit(&crate::ID)?;
-        MagicIntentBundleBuilder::new(
-            ctx.accounts.payer.to_account_info(),
-            ctx.accounts.magic_context.to_account_info(),
-            ctx.accounts.magic_program.to_account_info(),
-        )
-        .commit_and_undelegate(&[ctx.accounts.counter.to_account_info()])
-        .build_and_invoke()?;
-        Ok(())
-    }
 
-    /// Commit and undelegate permission via CPI
-    /// ANYONE can invoke_signed, may want to set checks/guards
-    pub fn commit_and_undelegate_permission(
-        ctx: Context<CommitAndUndelegatePermission>,
-    ) -> Result<()> {
+        // 1. Commit and undelegate the permission account
         CommitAndUndelegatePermissionCpiBuilder::new(
             &ctx.accounts.permission_program.to_account_info(),
         )
@@ -174,6 +179,15 @@ pub mod private_counter {
         .magic_context(&ctx.accounts.magic_context.to_account_info())
         .magic_program(&ctx.accounts.magic_program.to_account_info())
         .invoke_signed(&[&[COUNTER_SEED, &[ctx.bumps.counter]]])?;
+
+        // 2. Commit and undelegate the counter
+        MagicIntentBundleBuilder::new(
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.magic_context.to_account_info(),
+            ctx.accounts.magic_program.to_account_info(),
+        )
+        .commit_and_undelegate(&[ctx.accounts.counter.to_account_info()])
+        .build_and_invoke()?;
         Ok(())
     }
 }
@@ -222,7 +236,7 @@ pub struct Increment<'info> {
     pub counter: Account<'info, Counter>,
 }
 
-/// Account for the increment instruction + manual commit.
+/// Account context for commit-only operations (commit, increment_and_commit).
 #[commit]
 #[derive(Accounts)]
 pub struct IncrementAndCommit<'info> {
@@ -232,17 +246,20 @@ pub struct IncrementAndCommit<'info> {
     pub counter: Account<'info, Counter>,
 }
 
+/// Account context for combined undelegate operations.
+/// Includes the permission account + Permission Program so the single
+/// instruction can release both the permission and the counter atomically.
 #[commit]
 #[derive(Accounts)]
-pub struct CommitAndUndelegatePermission<'info> {
+pub struct UndelegateCounter<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
     #[account(mut, seeds = [COUNTER_SEED], bump)]
     pub counter: Account<'info, Counter>,
     /// CHECK: Checked by the permission program
     #[account(mut, seeds = [PERMISSION_SEED, counter.key().as_ref()], bump, seeds::program = permission_program.key())]
     pub permission: AccountInfo<'info>,
-    #[account(mut)]
-    pub payer: Signer<'info>,
-    /// CHECK: PERMISSION PROGRAM
+    /// CHECK: Permission Program
     #[account(address = PERMISSION_PROGRAM_ID)]
     pub permission_program: UncheckedAccount<'info>,
 }

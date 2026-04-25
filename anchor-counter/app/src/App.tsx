@@ -378,28 +378,16 @@ const App: React.FC = () => {
     }, [isPrivate, counterPda, connection, counter, submitTransaction, transferToTempKeypair]);
 
     /**
-     * Undelegate PDA — for private counter we also commit+undelegate the permission account first
+     * Undelegate PDA
+     *
+     * For the private counter, the program's `undelegate` instruction now
+     * releases BOTH the permission account and the counter atomically in one
+     * ER transaction, so the client just fires a single call in either mode.
      */
     const undelegatePdaTx = useCallback(async () => {
         if (!tempKeypair.current || !counterProgramClient.current) return;
         console.log(`Undelegate ${isPrivate ? 'private' : 'public'} counter`);
 
-        if (isPrivate) {
-            // 1. Commit and undelegate the permission account from the ER
-            const permissionTx = await counterProgramClient.current.methods
-                .commitAndUndelegatePermission()
-                .accounts({
-                    payer: tempKeypair.current.publicKey,
-                })
-                .transaction() as Transaction;
-            const permissionSig = await submitTransaction(permissionTx, true, true, "confirmed");
-            if (!permissionSig) return;
-
-            // Wait for permission undelegation to settle on the base layer
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-        }
-
-        // 2. Commit and undelegate the counter itself
         const transaction = await counterProgramClient.current.methods
             .undelegate()
             .accounts({
