@@ -51,11 +51,64 @@ has_ancestor_flag() {
   return 1
 }
 
+get_provider_cluster_override() {
+  # Inspect this script's own args first.
+  local prev=""
+  for arg in "$@"; do
+    case "$arg" in
+      --provider.cluster=*)
+        echo "${arg#--provider.cluster=}"
+        return 0
+        ;;
+    esac
+    if [ "$prev" = "--provider.cluster" ]; then
+      echo "$arg"
+      return 0
+    fi
+    prev="$arg"
+  done
+
+  # Then walk ancestor processes — anchor's own argv is what we usually find.
+  local pid=$$
+  local depth=0
+  local cmd
+  local match
+  while [ -n "$pid" ] && [ "$pid" -ne 1 ] && [ "$depth" -lt 20 ]; do
+    cmd="$(ps -p "$pid" -o args= -ww 2>/dev/null | tr '\n' ' ')"
+    match="$(echo "$cmd" | sed -nE 's/.*--provider\.cluster[ =]+([^ ]+).*/\1/p' | head -1)"
+    if [ -n "$match" ]; then
+      echo "$match"
+      return 0
+    fi
+    local ppid
+    ppid="$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')"
+    if [ -z "$ppid" ] || [ "$ppid" = "$pid" ] || [ "$ppid" = "0" ]; then
+      break
+    fi
+    pid="$ppid"
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
 has_anchor_cli_skip_local_validator() {
   if pgrep -af "anchor" 2>/dev/null | awk '($0 ~ /test/) && ($0 ~ /--skip-local-validator/) { found=1; exit } END { exit (found?0:1) }'; then
     return 0
   fi
   return 1
+}
+
+dump_validator_logs() {
+  if [ -f /tmp/ephemeral-validator.log ]; then
+    echo "=== ephemeral-validator log (size=$(wc -c < /tmp/ephemeral-validator.log) bytes) ==="
+    # Strip ANSI escape sequences from TUI output so the log stays readable.
+    sed -E $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g; s/\x1b[()][AB012]//g' /tmp/ephemeral-validator.log \
+      | sed -n '1,200p'
+  fi
+  if [ -f /tmp/mb-test-validator.log ]; then
+    echo "=== mb-test-validator log (size=$(wc -c < /tmp/mb-test-validator.log) bytes) ==="
+    sed -n '1,200p' /tmp/mb-test-validator.log
+  fi
 }
 
 airdrop_upgrade_authority() {
@@ -105,16 +158,27 @@ if [ ! -f "$ANCHOR_TOML" ]; then
   exit 1
 fi
 
-CLUSTER=$(grep -A 1 "^\[provider\]" "$ANCHOR_TOML" | grep "cluster" | sed 's/.*cluster = "\(.*\)".*/\1/' | tr -d ' ')
+# --provider.cluster on the anchor CLI wins over Anchor.toml so that callers
+# (CI, local overrides) can target a different cluster without rewriting the file.
+CLUSTER="$(get_provider_cluster_override "$@" || true)"
 if [ -z "$CLUSTER" ]; then
-  echo -e "${RED}Error: Could not determine cluster from Anchor.toml${NC}"
+  CLUSTER=$(grep -A 1 "^\[provider\]" "$ANCHOR_TOML" | grep "cluster" | sed 's/.*cluster = "\(.*\)".*/\1/' | tr -d ' ')
+fi
+if [ -z "$CLUSTER" ]; then
+  echo -e "${RED}Error: Could not determine cluster (no --provider.cluster flag and no [provider] cluster in Anchor.toml)${NC}"
   exit 1
 fi
+
+# Restore the terminal before printing anything in case a previous validator run
+# left newline translation disabled.
+[ -t 1 ] && stty sane < /dev/tty 2>/dev/null || true
 
 echo -e "${GREEN}Detected Cluster: ${CLUSTER}${NC}"
 
 # Cleanup function
 cleanup() {
+  # Belt-and-braces: restore the TTY if a validator's progress UI left it in raw mode.
+  [ -t 1 ] && stty sane < /dev/tty 2>/dev/null || true
   if [ "$CLUSTER" = "localnet" ]; then
     # Only cleanup validators if we started them
     if [ "$MB_VALIDATOR_STARTED_BY_US" = true ] || [ "$EPHEMERAL_VALIDATOR_STARTED_BY_US" = true ]; then
@@ -162,8 +226,22 @@ if [ "$CLUSTER" = "localnet" ]; then
     if check_port 8899 && ! pgrep -f "mb-test-validator" > /dev/null 2>&1; then
       echo -e "${YELLOW}Non-MagicBlock validator detected on port 8899, killing it...${NC}"
       echo -e "${YELLOW}Tip: run with 'anchor test --skip-local-validator --skip-build --skip-deploy' to avoid this${NC}"
-      lsof -ti :8899 | xargs kill 2>/dev/null
-      sleep 1
+      lsof -ti :8899 | xargs -r kill -TERM 2>/dev/null || true
+      for _ in $(seq 1 10); do
+        check_port 8899 || break
+        sleep 0.5
+      done
+      if check_port 8899; then
+        lsof -ti :8899 | xargs -r kill -KILL 2>/dev/null || true
+        for _ in $(seq 1 10); do
+          check_port 8899 || break
+          sleep 0.5
+        done
+      fi
+      if check_port 8899; then
+        echo -e "${RED}Error: port 8899 is still in use after kill${NC}"
+        exit 1
+      fi
     fi
   fi
 
@@ -198,16 +276,37 @@ if [ "$CLUSTER" = "localnet" ]; then
     MB_VALIDATOR_PID=$!
     MB_VALIDATOR_STARTED_BY_US=true
 
-    # Wait for solana-test-validator to be ready
-    echo -e "${YELLOW}Waiting for solana-test-validator to be ready...${NC}"
-    for i in {1..60}; do
-      if curl -s http://127.0.0.1:8899/health > /dev/null 2>&1; then
-        echo -e "${GREEN}solana-test-validator is ready${NC}"
+    # Wait for solana-test-validator to be producing slots. /health returns "ok"
+    # well before the bank is producing — ephemeral-validator's chainlink fails to
+    # bootstrap against a non-producing remote and exits silently.
+    echo -e "${YELLOW}Waiting for solana-test-validator to be producing slots...${NC}"
+    for i in $(seq 1 90); do
+      if [ "$MB_VALIDATOR_STARTED_BY_US" = true ] && ! kill -0 "$MB_VALIDATOR_PID" 2>/dev/null; then
+        echo -e "${RED}Error: mb-test-validator exited before becoming ready${NC}"
+        if [ -f /tmp/mb-test-validator.log ]; then
+          echo "Startup log (/tmp/mb-test-validator.log):"
+          sed -n '1,200p' /tmp/mb-test-validator.log
+        fi
+        exit 1
+      fi
+      # commitment=processed reports the latest slot the bank has processed,
+      # so we see slot>0 within ~1s instead of waiting ~15s for finalization.
+      # `sed -nE` is portable across BSD sed (macOS) and GNU sed (Linux/CI);
+      # plain BRE `\+` silently fails on BSD sed and never extracts a value.
+      slot=$(curl -s --max-time 1 -X POST -H "content-type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"getSlot","params":[{"commitment":"processed"}],"id":1}' http://127.0.0.1:8899 2>/dev/null \
+        | sed -nE 's/.*"result":([0-9]+).*/\1/p')
+      if [ -n "$slot" ] && [ "$slot" -gt 0 ]; then
+        echo -e "${GREEN}solana-test-validator is ready (slot=$slot)${NC}"
+        [ -t 1 ] && stty sane < /dev/tty 2>/dev/null || true
         break
       fi
-      if [ $i -eq 60 ]; then
-        echo -e "${RED}Error: solana-test-validator failed to start${NC}"
-        echo "Check logs at /tmp/mb-test-validator.log"
+      if [ $i -eq 90 ]; then
+        echo -e "${RED}Error: solana-test-validator failed to produce slots within 90s${NC}"
+        if [ -f /tmp/mb-test-validator.log ]; then
+          echo "Startup log (/tmp/mb-test-validator.log):"
+          sed -n '1,200p' /tmp/mb-test-validator.log
+        fi
         exit 1
       fi
       sleep 1
@@ -221,27 +320,46 @@ if [ "$CLUSTER" = "localnet" ]; then
     # Try to get the PID of the running validator
     EPHEMERAL_VALIDATOR_PID=$(lsof -ti :7799 | head -1)
   else
-    # Start ephemeral-validator
+    # Start ephemeral-validator. 0.8.x ships a mandatory ratatui/crossterm TUI;
+    # without a controlling TTY (e.g. when stdout is redirected to a file as in
+    # CI or when run as a background job), crossterm's alternate-screen setup
+    # fails and the binary exits silently with code 0 before opening port 7799.
+    # Wrap in a pty via python3 so the validator sees a real terminal; the TUI
+    # ANSI escape codes go into the log file (which is fine for diagnostics).
     echo -e "[SETUP] ${GREEN}Starting ephemeral-validator...${NC}"
-    RUST_LOG=info ephemeral-validator \
-      --remotes "http://127.0.0.1:8899" \
-      --remotes "ws://127.0.0.1:8900" \
-      -l "127.0.0.1:7799" \
-      --reset \
-      > /tmp/ephemeral-validator.log 2>&1 &
+    RUST_LOG=info python3 -c '
+import pty, os, sys
+status = pty.spawn([
+    "ephemeral-validator",
+    "--remotes", "http://127.0.0.1:8899",
+    "--remotes", "ws://127.0.0.1:8900",
+    "-l", "127.0.0.1:7799",
+    "--reset",
+    "--lifecycle", "ephemeral",
+])
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
+' </dev/null > /tmp/ephemeral-validator.log 2>&1 &
     EPHEMERAL_VALIDATOR_PID=$!
     EPHEMERAL_VALIDATOR_STARTED_BY_US=true
 
     # Wait for ephemeral-validator to be ready
     echo -e "${YELLOW}Waiting for ephemeral-validator to be ready...${NC}"
     for i in {1..60}; do
-      if curl -s http://127.0.0.1:7799/health > /dev/null 2>&1; then
+      if curl -s --max-time 1 http://127.0.0.1:7799/health > /dev/null 2>&1; then
         echo -e "${GREEN}ephemeral-validator is ready${NC}"
+        [ -t 1 ] && stty sane < /dev/tty 2>/dev/null || true
         break
       fi
+      if ! kill -0 "$EPHEMERAL_VALIDATOR_PID" 2>/dev/null; then
+        wait "$EPHEMERAL_VALIDATOR_PID" 2>/dev/null
+        ev_exit=$?
+        echo -e "${RED}Error: ephemeral-validator exited before becoming ready (exit=${ev_exit})${NC}"
+        dump_validator_logs
+        exit 1
+      fi
       if [ $i -eq 60 ]; then
-        echo -e "${RED}Error: ephemeral-validator failed to start${NC}"
-        echo "Check logs at /tmp/ephemeral-validator.log"
+        echo -e "${RED}Error: ephemeral-validator failed to start within 60s${NC}"
+        dump_validator_logs
         exit 1
       fi
       sleep 1

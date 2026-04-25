@@ -7,12 +7,12 @@ import * as nacl from "tweetnacl";
 
 const COUNTER_SEED = "counter";
 
-describe.only("private-counter", () => {
+describe("private-counter", () => {
   console.log("private-counter.ts");
 
   let provider = new anchor.AnchorProvider(
     new anchor.web3.Connection(process.env.PROVIDER_ENDPOINT || "https://api.devnet.solana.com", {
-      wsEndpoint: process.env.PROVIDER_ENDPOINT?.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://") || undefined,
+      wsEndpoint: process.env.WS_ENDPOINT || undefined,
       commitment: "confirmed",
     }),
     anchor.Wallet.local(),
@@ -27,7 +27,7 @@ describe.only("private-counter", () => {
 
   let providerEphemeralRollup = new anchor.AnchorProvider(
     new anchor.web3.Connection(ephemeralRpcEndpoint, {
-      wsEndpoint: process.env.TEE_PROVIDER_ENDPOINT?.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://") || undefined,
+      wsEndpoint: process.env.TEE_WS_ENDPOINT || undefined,
       commitment: "confirmed",
     }),
     anchor.Wallet.local(),
