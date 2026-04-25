@@ -12,7 +12,7 @@ describe("private-counter", () => {
 
   let provider = new anchor.AnchorProvider(
     new anchor.web3.Connection(process.env.PROVIDER_ENDPOINT || "https://api.devnet.solana.com", {
-      wsEndpoint: process.env.PROVIDER_ENDPOINT || undefined,
+      wsEndpoint: process.env.PROVIDER_ENDPOINT?.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://") || undefined,
       commitment: "confirmed",
     }),
     anchor.Wallet.local(),
@@ -22,12 +22,12 @@ describe("private-counter", () => {
   const teeUrl = "https://devnet-tee.magicblock.app";
   const teeWsUrl = "wss://devnet-tee.magicblock.app";
   const ephemeralRpcEndpoint = (
-    process.env.EPHEMERAL_PROVIDER_ENDPOINT || teeUrl
+    process.env.TEE_PROVIDER_ENDPOINT || teeUrl
   ).replace(/\/$/, "");
 
   let providerEphemeralRollup = new anchor.AnchorProvider(
     new anchor.web3.Connection(ephemeralRpcEndpoint, {
-      wsEndpoint: process.env.EPHEMERAL_WS_ENDPOINT || undefined,
+      wsEndpoint: process.env.TEE_PROVIDER_ENDPOINT?.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://") || undefined,
       commitment: "confirmed",
     }),
     anchor.Wallet.local(),
